@@ -22,8 +22,9 @@ exports.getActiveBrands = async (req, res) => {
 
 exports.createBrand = async (req, res) => {
     try {
-        const brand = req.body;
-        const data = await brandService.createBrand(brand);
+        const inputData = req.body;
+        inputData.active = inputData.active === undefined ? true : inputData.active;
+        const data = await brandService.createBrand(inputData);
         res.status(201).json({ success: true, data });
     } catch (error) {
         console.error("Error in createBrand:", error);
@@ -33,9 +34,11 @@ exports.createBrand = async (req, res) => {
 
 exports.updateBrand = async (req, res) => {
     try {
-        const id = req.params.id;
-        const brand = req.body;
-        const data = await brandService.updateBrand(id, brand);
+        const id = parseInt(req.params.id);
+        const requestBody = req.body;
+        // todo set default active true if not provided
+        requestBody.active = requestBody.active === undefined ? true : requestBody.active;
+        const data = await brandService.updateBrand(id, requestBody);
 
         if (!data) {
             return res.status(404).json({ success: false, message: "Brand not found" });
