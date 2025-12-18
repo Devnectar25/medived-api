@@ -84,6 +84,16 @@ exports.setActiveProduct = async (req, res) => {
     }
 };
 
+exports.getActiveProducts = async (req, res) => {
+    try {
+        const data = await productService.getActiveProducts();
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error("Error in getActiveProducts:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
 exports.setInactiveProduct = async (req, res) => {
     try {
         const id = req.params.id;
