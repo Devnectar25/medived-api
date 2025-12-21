@@ -1,52 +1,52 @@
+const storageService = require('../services/storageService');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const uploadPath = path.join(__dirname, '../../asset/productImages');
-        if (!fs.existsSync(uploadPath)) {
-            fs.mkdirSync(uploadPath, { recursive: true });
-        }
-        cb(null, uploadPath);
-    },
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, 'category-' + uniqueSuffix + path.extname(file.originalname));
-    }
-});
-
-const upload = multer({
+// Configure Multer for memory storage
+const storage = multer.memoryStorage();
+exports.uploadMiddleware = multer({
     storage: storage,
     limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
     fileFilter: (req, file, cb) => {
-        const filetypes = /jpeg|jpg|png|webp/;
-        const mimetype = filetypes.test(file.mimetype);
-        const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
-
-        if (mimetype && extname) {
-            return cb(null, true);
+        const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+        if (allowedTypes.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error('Invalid file type. Only JPEG, PNG, WebP, and SVG are allowed.'));
         }
-        cb(new Error("Error: File upload only supports the following filetypes - " + filetypes));
     }
-});
+}).single('image');
 
-exports.uploadCategoryImage = (req, res) => {
+exports.uploadImage = async (req, res) => {
     try {
         if (!req.file) {
-            return res.status(400).json({ success: false, message: "Please upload a file" });
+            return res.status(400).json({ success: false, message: "No file uploaded" });
         }
 
-        const absolutePath = path.resolve(req.file.path);
+        const folderName = req.body.folderName || 'common'; // Default to 'common' if not provided
+        const publicUrl = await storageService.uploadImage(req.file, folderName);
+
         res.json({
             success: true,
-            message: "Image uploaded successfully",
-            filePath: absolutePath
+            url: publicUrl,
+            message: "Image uploaded successfully"
         });
     } catch (error) {
-        console.error("Error in uploadCategoryImage:", error);
+        console.error("Error in uploadImage:", error);
         res.status(500).json({ success: false, error: error.message });
     }
 };
 
-exports.uploadMiddleware = upload.single('image');
+exports.deleteImage = async (req, res) => {
+    try {
+        const { imageUrl } = req.body;
+        if (!imageUrl) {
+            return res.status(400).json({ success: false, message: "Image URL is required" });
+        }
+
+        await storageService.deleteImage(imageUrl);
+        res.json({ success: true, message: "Image deleted successfully" });
+    } catch (error) {
+        console.error("Error in deleteImage:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
