@@ -20,8 +20,16 @@ pool.connect().then(client => {
 });
 
 const server = app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT} `);
+}).on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+        console.error(`❌ Error: Port ${PORT} is already in use.`);
+    } else {
+        console.error('❌ Server startup error:', err);
+    }
+    process.exit(1);
 });
+
 
 // Handle unhandled rejections
 process.on('unhandledRejection', (err) => {

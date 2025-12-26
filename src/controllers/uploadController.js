@@ -50,3 +50,18 @@ exports.deleteImage = async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 };
+
+exports.deleteFolder = async (req, res) => {
+    try {
+        const { folderPath } = req.body;
+        if (!folderPath) {
+            return res.status(400).json({ success: false, message: "Folder path is required" });
+        }
+
+        await storageService.deleteFolder(folderPath);
+        res.json({ success: true, message: "Folder deleted successfully" });
+    } catch (error) {
+        console.error("Error in deleteFolder:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};

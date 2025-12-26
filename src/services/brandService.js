@@ -1,6 +1,22 @@
 const pool = require("../config/db");
 
-exports.getAllBrands = async () => {
+exports.getAllBrands = async (page, limit) => {
+    if (page && limit) {
+        const offset = (page - 1) * limit;
+        const countResult = await pool.query("SELECT COUNT(*) FROM brand");
+        const total = parseInt(countResult.rows[0].count);
+
+        const result = await pool.query("SELECT * FROM brand ORDER BY brand_id LIMIT $1 OFFSET $2", [limit, offset]);
+
+        return {
+            data: result.rows,
+            total,
+            page: parseInt(page),
+            limit: parseInt(limit),
+            totalPages: Math.ceil(total / limit)
+        };
+    }
+
     const result = await pool.query("SELECT * FROM brand ORDER BY brand_id");
     return result.rows;
 };

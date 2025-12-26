@@ -50,3 +50,27 @@ exports.deleteImage = async (imageUrl) => {
         throw error;
     }
 };
+
+exports.deleteFolder = async (folderPath) => {
+    try {
+        // List files in the folder first
+        const { data: listData, error: listError } = await supabase.storage
+            .from(BUCKET_NAME)
+            .list(folderPath);
+
+        if (listError) throw listError;
+
+        if (listData && listData.length > 0) {
+            const filesToRemove = listData.map(file => `${folderPath}/${file.name}`);
+            const { error: removeError } = await supabase.storage
+                .from(BUCKET_NAME)
+                .remove(filesToRemove);
+
+            if (removeError) throw removeError;
+        }
+
+        return true;
+    } catch (error) {
+        throw error;
+    }
+};
