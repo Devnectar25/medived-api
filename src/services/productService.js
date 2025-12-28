@@ -16,35 +16,66 @@ const mapProduct = (p) => ({
     image: p.image || 'https://via.placeholder.com/300',
     images: p.product_images || [p.image || 'https://via.placeholder.com/300'], // Fallback to main image
     inStock: p.instock,
-    stockQuantity: p.stock_quantity || 0,
+    stockQuantity: p.quantity || 0,
     benefits: p.benefits,
     ingredients: p.ingredients,
     usage: p.usage,
     directions: p.directions,
     supports: p.supports || [],
     expiryInfo: p.expiryinfo,
-    webSource: p.websource,
+    subCategory: p.subcategory_id || '',
     specifications: p.specifications,
+    promoted: p.promoted || false,
     active: p.active !== false // Default true if null/undefined
 });
 
-exports.getAllProducts = async (page, limit, active) => {
-    const activeFilter = active === 'true' ? 'WHERE p.active = true' : '';
+exports.getAllProducts = async (page, limit, active, search, category_id, brand_id) => {
+    let whereClauses = [];
+    let params = [];
+    let paramIdx = 1;
+
+    if (active === 'true') {
+        whereClauses.push(`p.active = true`);
+    }
+
+    if (search) {
+        whereClauses.push(`p.productname ILIKE $${paramIdx}`);
+        params.push(`%${search}%`);
+        paramIdx++;
+    }
+
+    if (category_id) {
+        whereClauses.push(`p.category_id = $${paramIdx}`);
+        params.push(category_id);
+        paramIdx++;
+    }
+
+    if (brand_id) {
+        whereClauses.push(`p.brand = $${paramIdx}`);
+        params.push(brand_id);
+        paramIdx++;
+    }
+
+    const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
     if (page && limit) {
         const offset = (page - 1) * limit;
-        const countResult = await pool.query(`SELECT COUNT(*) FROM products p ${activeFilter}`);
+        const countQuery = `SELECT COUNT(*) FROM products p ${whereString}`;
+        const countResult = await pool.query(countQuery, params);
         const total = parseInt(countResult.rows[0].count);
 
-        const result = await pool.query(`
+        const dataQuery = `
             SELECT p.*, c.name as category_name, b.name as brand_name
             FROM products p
             LEFT JOIN category c ON p.category_id = c.category_id
             LEFT JOIN brand b ON p.brand = b.brand_id
-            ${activeFilter}
+            ${whereString}
             ORDER BY p.updated_at DESC, p.product_id DESC
-            LIMIT $1 OFFSET $2
-        `, [limit, offset]);
+            LIMIT $${paramIdx} OFFSET $${paramIdx + 1}
+        `;
+
+        const dataParams = [...params, limit, offset];
+        const result = await pool.query(dataQuery, dataParams);
 
         return {
             data: result.rows.map(mapProduct),
@@ -60,9 +91,9 @@ exports.getAllProducts = async (page, limit, active) => {
         FROM products p
         LEFT JOIN category c ON p.category_id = c.category_id
         LEFT JOIN brand b ON p.brand = b.brand_id
-        ${activeFilter}
+        ${whereString}
         ORDER BY p.updated_at DESC, p.product_id DESC
-    `);
+    `, params);
     return result.rows.map(mapProduct);
 };
 
@@ -132,17 +163,17 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
 exports.createProduct = async (product) => {
     const {
         productname, description, shortdescription, price, originalprice,
-        discount, category_id, brand, image, instock, promoted,
-        benefits, ingredients, usage, directions, stock_quantity, supports, images,
-        expiryinfo, websource, specifications, active
+        discount, category_id: category_id, brand, image, instock, promoted,
+        benefits, ingredients, usage, directions, quantity, supports, images,
+        expiryinfo, subcategory_id, specifications, active
     } = product;
 
     const result = await pool.query(
         `INSERT INTO products 
-        (productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, stock_quantity, supports, product_images, expiryinfo, websource, specifications, active, createdate, updated_at) 
+        (productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, supports, product_images, expiryinfo, subcategory_id, specifications, active, createdate, updated_at) 
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW(), NOW()) 
         RETURNING *`,
-        [productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, stock_quantity || 0, supports || [], images || [], expiryinfo, websource, specifications, active !== false]
+        [productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity || 0, supports || [], images || [], expiryinfo, subcategory_id, specifications, active !== false]
     );
     return mapProduct(result.rows[0]);
 };
@@ -175,9 +206,9 @@ const getFolderFromUrl = (url) => {
 exports.updateProduct = async (id, product) => {
     const {
         productname, description, shortdescription, price, originalprice,
-        discount, category_id, brand, image, instock, promoted,
-        benefits, ingredients, usage, directions, stock_quantity, supports, images,
-        expiryinfo, websource, specifications, active
+        discount, category_id: category_id, brand, image, instock, promoted,
+        benefits, ingredients, usage, directions, quantity, supports, images,
+        expiryinfo, subcategory_id, specifications, active
     } = product;
 
     // 1. Get current product to check for removed images
@@ -202,14 +233,14 @@ exports.updateProduct = async (id, product) => {
             discount = $7, category_id = $8, brand = $9, image = $10, instock = $11, promoted = $12,
             benefits = COALESCE($13, benefits), ingredients = COALESCE($14, ingredients), 
             usage = COALESCE($15, usage), directions = COALESCE($16, directions),
-            stock_quantity = COALESCE($17, stock_quantity), supports = COALESCE($18, supports),
+            quantity = COALESCE($17, quantity), supports = COALESCE($18, supports),
             product_images = COALESCE($19, product_images),
-            expiryinfo = $20, websource = $21, specifications = $22,
+            expiryinfo = $20, subcategory_id = $21, specifications = $22,
             active = COALESCE($23, active),
             updated_at = NOW()
         WHERE product_id = $1 
         RETURNING *`,
-        [id, productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, stock_quantity, supports, images, expiryinfo, websource, specifications, active]
+        [id, productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, supports, images, expiryinfo, subcategory_id, specifications, active]
     );
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
 };

@@ -40,7 +40,7 @@ CREATE TABLE public.address (
     country character varying(150),
     pincode character varying(20),
     active boolean DEFAULT true,
-    createdat timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    createdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -86,7 +86,7 @@ CREATE TABLE public.admins (
     emailid character varying(200),
     active boolean DEFAULT true,
     accesstopage text[],
-    createdat timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    createdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -129,7 +129,7 @@ CREATE TABLE public.blog (
     active boolean DEFAULT true,
     date timestamp without time zone,
     image character varying(500),
-    createdat timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    createdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -170,7 +170,7 @@ CREATE TABLE public.brand (
     name character varying(200) NOT NULL,
     description text,
     active boolean DEFAULT true,
-    createdat timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    createdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     brand_logo character varying(255)
 );
 
@@ -211,7 +211,7 @@ CREATE TABLE public.cart (
     srno integer NOT NULL,
     userid integer NOT NULL,
     orderdetails text[],
-    createdat timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    createdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -252,7 +252,7 @@ CREATE TABLE public.category (
     name character varying(200) NOT NULL,
     description text,
     active boolean DEFAULT true,
-    createdat timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    createdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -293,7 +293,7 @@ CREATE TABLE public.favarites (
     userid integer NOT NULL,
     productid character varying(150) NOT NULL,
     whichlist boolean DEFAULT false,
-    createdat timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    createdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -336,7 +336,7 @@ CREATE TABLE public.homepagebanner (
     active boolean DEFAULT true,
     date timestamp without time zone,
     image character varying(500),
-    createdat timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    createdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -382,7 +382,7 @@ CREATE TABLE public.orderdetails (
     paymentmode character varying(100),
     deliverystatus character varying(100),
     courierdetails text[],
-    createdat timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    createdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -472,8 +472,8 @@ CREATE TABLE public.products (
     srno integer NOT NULL,
     name character varying(255) NOT NULL,
     brandid integer,
-    categoryid integer,
-    subcategoryid integer,
+    category_id integer,
+    subcategory_id integer,
     problemcategory text[],
     producttype text[],
     shortdescription text,
@@ -493,7 +493,7 @@ CREATE TABLE public.products (
     specifications text[],
     quantity integer,
     promoted boolean DEFAULT false,
-    createdat timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    createdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -536,7 +536,7 @@ CREATE TABLE public.review (
     review text,
     rating numeric(3,2),
     date timestamp without time zone,
-    createdat timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    createdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -574,11 +574,11 @@ ALTER SEQUENCE public.review_srno_seq OWNED BY public.review.srno;
 
 CREATE TABLE public.subcategory (
     srno integer NOT NULL,
-    categoryid integer NOT NULL,
+    category_id integer NOT NULL,
     name character varying(200) NOT NULL,
     description text,
     active boolean DEFAULT true,
-    createdat timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    createdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -626,7 +626,7 @@ CREATE TABLE public.users (
     active boolean DEFAULT true,
     emailverified boolean DEFAULT false,
     contactnoverified boolean DEFAULT false,
-    createdat timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    createdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -838,7 +838,7 @@ ALTER TABLE ONLY public.userslogindetails ALTER COLUMN id SET DEFAULT nextval('p
 -- Data for Name: brand; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-INSERT INTO public.brand (srno, name, description, active, createdat, brand_logo) VALUES
+INSERT INTO public.brand (srno, name, description, active, createdate, brand_logo) VALUES
 ('1', 'Dabur', '', 't', '2025-12-14 16:56:42.769947', '@/assets/BrandLogo1.png'),
 ('2', 'SBL', '', 't', '2025-12-14 16:57:30.241549', '@/assets/BrandLogo2.png'),
 ('3', 'Allen', '', 't', '2025-12-14 16:58:08.343623', '@/assets/BrandLogo3.png'),
@@ -2059,20 +2059,20 @@ ALTER TABLE ONLY public.products
 
 --
 -- TOC entry 5012 (class 2606 OID 16645)
--- Name: products products_categoryid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: products products_category_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.products
-    ADD CONSTRAINT products_categoryid_fkey FOREIGN KEY (categoryid) REFERENCES public.category(srno) ON DELETE SET NULL;
+    ADD CONSTRAINT products_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.category(srno) ON DELETE SET NULL;
 
 
 --
 -- TOC entry 5013 (class 2606 OID 16650)
--- Name: products products_subcategoryid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: products products_subcategory_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.products
-    ADD CONSTRAINT products_subcategoryid_fkey FOREIGN KEY (subcategoryid) REFERENCES public.subcategory(srno) ON DELETE SET NULL;
+    ADD CONSTRAINT products_subcategory_id_fkey FOREIGN KEY (subcategory_id) REFERENCES public.subcategory(srno) ON DELETE SET NULL;
 
 
 --
@@ -2095,11 +2095,11 @@ ALTER TABLE ONLY public.review
 
 --
 -- TOC entry 5016 (class 2606 OID 16665)
--- Name: subcategory subcategory_categoryid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: subcategory subcategory_category_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
 ALTER TABLE ONLY public.subcategory
-    ADD CONSTRAINT subcategory_categoryid_fkey FOREIGN KEY (categoryid) REFERENCES public.category(srno) ON DELETE CASCADE;
+    ADD CONSTRAINT subcategory_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.category(srno) ON DELETE CASCADE;
 
 
 --

@@ -51,6 +51,15 @@ exports.loginUser = async (email, password) => {
         throw new Error("Invalid email or password");
     }
 
+    if (user.contactno) {
+        console.log(`[2FA] Triggered for user ${user.username}. Code: 123456`);
+        return {
+            requires2FA: true,
+            userId: user.username,
+            phone: user.contactno
+        };
+    }
+
     const token = generateToken(user.username, 'user');
     delete user.password;
 

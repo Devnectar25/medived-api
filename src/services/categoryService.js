@@ -22,7 +22,14 @@ exports.getAllCategories = async (page, limit) => {
 };
 
 exports.getActiveCategories = async () => {
-    const result = await pool.query("SELECT * FROM category WHERE active = true ORDER BY name ASC");
+    const result = await pool.query(`
+        SELECT c.*, COUNT(p.product_id)::int as product_count
+        FROM category c
+        LEFT JOIN products p ON c.category_id = p.category_id AND p.active = true
+        WHERE c.active = true
+        GROUP BY c.category_id
+        ORDER BY c.name ASC
+    `);
     return result.rows;
 };
 

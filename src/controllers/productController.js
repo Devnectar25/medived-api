@@ -2,8 +2,8 @@ const productService = require('../services/productService');
 
 exports.getProducts = async (req, res) => {
     try {
-        const { page, limit, active } = req.query;
-        const data = await productService.getAllProducts(page, limit, active);
+        const { page, limit, active, search, category, brand } = req.query;
+        const data = await productService.getAllProducts(page, limit, active, search, category, brand);
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in getProducts:", error);
@@ -41,8 +41,8 @@ exports.getRelatedProducts = async (req, res) => {
         // If frontend passes category NAME, this will fail.
         // Let's fetch the product first if category is missing.
 
-        let categoryId = category;
-        if (!categoryId) {
+        let category_id = category;
+        if (!category_id) {
             const product = await productService.getProductById(id);
             if (product) {
                 // mapProduct returns category NAME (e.g. "Uncategorized"). 
@@ -84,7 +84,7 @@ exports.createProduct = async (req, res) => {
         res.status(201).json({ success: true, data });
     } catch (error) {
         console.error("Error in createProduct:", error);
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: "Internal Server Error" });
     }
 };
 
@@ -101,7 +101,7 @@ exports.updateProduct = async (req, res) => {
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in updateProduct:", error);
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: "Internal Server Error" });
     }
 };
 
@@ -117,7 +117,7 @@ exports.deleteProduct = async (req, res) => {
         res.json({ success: true, data, message: "Product deleted successfully" });
     } catch (error) {
         console.error("Error in deleteProduct:", error);
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: "Internal Server Error" });
     }
 };
 
@@ -133,7 +133,7 @@ exports.setActiveProduct = async (req, res) => {
         res.json({ success: true, data, message: "Product activated successfully" });
     } catch (error) {
         console.error("Error in setActiveProduct:", error);
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: "Internal Server Error" });
     }
 };
 
@@ -143,7 +143,17 @@ exports.getActiveProducts = async (req, res) => {
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in getActiveProducts:", error);
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: "Internal Server Error" });
+    }
+};
+
+exports.getFeaturedProducts = async (req, res) => {
+    try {
+        const data = await productService.getFeaturedProducts();
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error("Error in getFeaturedProducts:", error);
+        res.status(500).json({ success: false, error: "Internal Server Error" });
     }
 };
 
@@ -159,7 +169,7 @@ exports.setInactiveProduct = async (req, res) => {
         res.json({ success: true, data, message: "Product deactivated successfully" });
     } catch (error) {
         console.error("Error in setInactiveProduct:", error);
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: "Internal Server Error" });
     }
 };
 
@@ -175,6 +185,6 @@ exports.toggleProductStatus = async (req, res) => {
         res.json({ success: true, data, message: "Product status toggled successfully" });
     } catch (error) {
         console.error("Error in toggleProductStatus:", error);
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: "Internal Server Error" });
     }
 };
