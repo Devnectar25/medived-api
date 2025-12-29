@@ -6,6 +6,7 @@ const mapProduct = (p) => ({
     name: p.productname || '',
     brand: p.brand_name || p.brand || 'Generic',
     category: p.category_name || 'Uncategorized',
+    categoryId: p.category_id || '',
     shortDescription: p.shortdescription || '',
     description: p.description || '',
     price: parseFloat(p.price) || 0,
