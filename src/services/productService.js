@@ -3,7 +3,7 @@ const pool = require("../config/db");
 // Helper to map DB columns to camelCase frontend fields
 const mapProduct = (p) => ({
     id: p.product_id?.toString() || '',
-    name: p.productname,
+    name: p.productname || '',
     brand: p.brand_name || p.brand || 'Generic',
     category: p.category_name || 'Uncategorized',
     shortDescription: p.shortdescription || '',
@@ -16,14 +16,15 @@ const mapProduct = (p) => ({
     image: p.image || 'https://via.placeholder.com/300',
     images: p.product_images || [p.image || 'https://via.placeholder.com/300'], // Fallback to main image
     inStock: p.instock,
-    stockQuantity: p.quantity || 0,
+    stockQuantity: p.stock_quantity || p.quantity || 0,
     benefits: p.benefits,
     ingredients: p.ingredients,
     usage: p.usage,
     directions: p.directions,
     supports: p.supports || [],
     expiryInfo: p.expiryinfo,
-    subCategory: p.subcategory_id || '',
+    subCategory: p.subcategory_name || '', // Use joined name
+    subCategoryId: p.subcategory_id || '', // Keep ID for reference
     specifications: p.specifications,
     promoted: p.promoted || false,
     active: p.active !== false // Default true if null/undefined
@@ -65,10 +66,11 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
         const total = parseInt(countResult.rows[0].count);
 
         const dataQuery = `
-            SELECT p.*, c.name as category_name, b.name as brand_name
+            SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
             FROM products p
             LEFT JOIN category c ON p.category_id = c.category_id
             LEFT JOIN brand b ON p.brand = b.brand_id
+            LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
             ${whereString}
             ORDER BY p.updated_at DESC, p.product_id DESC
             LIMIT $${paramIdx} OFFSET $${paramIdx + 1}
@@ -87,10 +89,11 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
     }
 
     const result = await pool.query(`
-        SELECT p.*, c.name as category_name, b.name as brand_name
+        SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
         FROM products p
         LEFT JOIN category c ON p.category_id = c.category_id
         LEFT JOIN brand b ON p.brand = b.brand_id
+        LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
         ${whereString}
         ORDER BY p.updated_at DESC, p.product_id DESC
     `, params);
@@ -98,11 +101,16 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
 };
 
 exports.getProductById = async (id) => {
+    // Check if ID is numeric to prevent PG error
+    if (isNaN(id)) {
+        return null;
+    }
     const result = await pool.query(
-        `SELECT p.*, c.name as category_name, b.name as brand_name 
+        `SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
          FROM products p 
          LEFT JOIN category c ON p.category_id = c.category_id 
          LEFT JOIN brand b ON p.brand = b.brand_id
+         LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
          WHERE p.product_id = $1`,
         [id]
     );
@@ -111,10 +119,11 @@ exports.getProductById = async (id) => {
 
 exports.getActiveProducts = async () => {
     const result = await pool.query(`
-        SELECT p.*, c.name as category_name, b.name as brand_name
+        SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
         FROM products p
         LEFT JOIN category c ON p.category_id = c.category_id
         LEFT JOIN brand b ON p.brand = b.brand_id
+        LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
         WHERE p.active = true
         ORDER BY p.updated_at DESC, p.product_id DESC
     `);
@@ -123,10 +132,11 @@ exports.getActiveProducts = async () => {
 
 exports.getFeaturedProducts = async (query) => {
     const result = await pool.query(`
-        SELECT p.*, c.name as category_name, b.name as brand_name
+        SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
         FROM products p
         LEFT JOIN category c ON p.category_id = c.category_id
         LEFT JOIN brand b ON p.brand = b.brand_id
+        LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
         WHERE p.promoted = true AND p.active = true 
         ORDER BY p.updated_at DESC, p.product_id DESC
         LIMIT 8
@@ -139,10 +149,11 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
     // Supports category being a name (string) because frontend passes name.
 
     let query = `
-        SELECT p.*, c.name as category_name, b.name as brand_name
+        SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
         FROM products p
         LEFT JOIN category c ON p.category_id = c.category_id
         LEFT JOIN brand b ON p.brand = b.brand_id
+        LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
         WHERE p.product_id != $1 AND p.active = true
     `;
     const params = [productId];

@@ -63,7 +63,8 @@ exports.deleteHealthTip = async (id) => {
 };
 
 exports.getActiveHealthTips = async () => {
-    const result = await pool.query("SELECT * FROM health_tips WHERE active = true ORDER BY created_at DESC");
+    // health_tips table is missing 'active' column, returning all tips as fallback
+    const result = await pool.query("SELECT * FROM health_tips ORDER BY created_at DESC");
     return result.rows.map(mapHealthTip);
 };
 
