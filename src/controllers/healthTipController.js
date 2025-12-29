@@ -117,7 +117,7 @@ exports.uploadHealthTipImage = async (req, res) => {
             return res.status(400).json({ success: false, message: "No file uploaded" });
         }
 
-        const publicUrl = await storageService.uploadImage(req.file, 'health-tips');
+        const publicUrl = await storageService.uploadImage(req.file, 'health_tips');
         res.json({ success: true, url: publicUrl, message: "Image uploaded successfully" });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
