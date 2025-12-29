@@ -9,10 +9,27 @@ const mapHealthTip = (t) => ({
     readTime: t.read_time,
     author: t.author,
     category: t.category,
-    content: t.content
+    content: t.content,
+    active: t.active
 });
 
-exports.getAllHealthTips = async () => {
+exports.getAllHealthTips = async (page, limit) => {
+    if (page && limit) {
+        const offset = (page - 1) * limit;
+        const countResult = await pool.query("SELECT COUNT(*) FROM health_tips");
+        const total = parseInt(countResult.rows[0].count);
+
+        const result = await pool.query("SELECT * FROM health_tips ORDER BY created_at DESC LIMIT $1 OFFSET $2", [limit, offset]);
+
+        return {
+            data: result.rows.map(mapHealthTip),
+            total,
+            page: parseInt(page),
+            limit: parseInt(limit),
+            totalPages: Math.ceil(total / limit)
+        };
+    }
+
     const result = await pool.query("SELECT * FROM health_tips ORDER BY created_at DESC");
     return result.rows.map(mapHealthTip);
 };
@@ -43,4 +60,19 @@ exports.updateHealthTip = async (id, data) => {
 exports.deleteHealthTip = async (id) => {
     const result = await pool.query("DELETE FROM health_tips WHERE id = $1 RETURNING *", [id]);
     return result.rows[0];
+};
+
+exports.getActiveHealthTips = async () => {
+    const result = await pool.query("SELECT * FROM health_tips WHERE active = true ORDER BY created_at DESC");
+    return result.rows.map(mapHealthTip);
+};
+
+exports.setActiveHealthTip = async (id) => {
+    const result = await pool.query("UPDATE health_tips SET active = true WHERE id = $1 RETURNING *", [id]);
+    return result.rows[0] ? mapHealthTip(result.rows[0]) : null;
+};
+
+exports.setInactiveHealthTip = async (id) => {
+    const result = await pool.query("UPDATE health_tips SET active = false WHERE id = $1 RETURNING *", [id]);
+    return result.rows[0] ? mapHealthTip(result.rows[0]) : null;
 };
