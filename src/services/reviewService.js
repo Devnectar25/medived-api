@@ -30,10 +30,10 @@ exports.createReview = async (data) => {
     if (userCheck.rows.length === 0) {
         try {
             // Create the user on the fly to satisfy constraint
-            const email = `${username.toLowerCase().replace(/\s+/g, '')}@example.com`;
+            const email = `${(username || 'guest').toLowerCase().replace(/\s+/g, '')}@example.com`;
             await pool.query(
                 "INSERT INTO users (username, emailid, password, active) VALUES ($1, $2, 'guest123', true)",
-                [username, email]
+                [username || 'guest', email]
             );
         } catch (userErr) {
             console.warn("Could not create new user, falling back to existing:", userErr.message);

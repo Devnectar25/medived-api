@@ -190,10 +190,11 @@ const getFolderFromUrl = (url) => {
         // existing deleteImage splits by `${BUCKET_NAME}/`
 
         // Example: https://xyz.supabase.co/.../mediveda/products/123/img.jpg
-        const parts = url.split('/mediveda/');
-        if (parts.length < 2) return null;
+        const parts = url?.split('/mediveda/');
+        if (!parts || parts.length < 2) return null;
 
         const path = parts[1]; // products/123/img.jpg
+        if (!path) return null;
         const lastSlashIndex = path.lastIndexOf('/');
         if (lastSlashIndex === -1) return null;
 

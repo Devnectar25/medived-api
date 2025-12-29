@@ -4,7 +4,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_key';
 exports.protect = (req, res, next) => {
     let token;
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-        token = req.headers.authorization.split(' ')[1];
+        token = req.headers.authorization?.split(' ')[1];
     }
 
     if (!token) {

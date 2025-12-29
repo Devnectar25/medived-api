@@ -4,8 +4,11 @@ const BUCKET_NAME = 'mediveda';
 
 exports.uploadImage = async (file, folder = 'brand') => {
     try {
+        if (!file || !file.originalname) {
+            throw new Error('Invalid file: missing originalname');
+        }
         const timestamp = Date.now();
-        const fileExt = file.originalname.split('.').pop();
+        const fileExt = file.originalname.split('.').pop() || 'jpg';
         const fileName = `${folder}/${timestamp}-${Math.random().toString(36).substring(7)}.${fileExt}`;
 
         const { data, error } = await supabase.storage
@@ -35,7 +38,7 @@ exports.deleteImage = async (imageUrl) => {
 
         // Extract path from URL
         // Example URL: https://xyz.supabase.co/storage/v1/object/public/mediveda/brand/filename.jpg
-        const path = imageUrl.split(`${BUCKET_NAME}/`).pop();
+        const path = imageUrl?.split(`${BUCKET_NAME}/`).pop();
 
         const { data, error } = await supabase.storage
             .from(BUCKET_NAME)
