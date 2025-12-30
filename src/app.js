@@ -25,7 +25,7 @@ app.use('/api/health-tips', healthTipRoutes);
 app.use('/api/reviews', require('./routes/reviewRoutes'));
 
 app.get('/', (req, res) => {
-    res.send("HomeVed API is running...");
+    res.send("HomeVed API is running....");
 });
 
 module.exports = app;
