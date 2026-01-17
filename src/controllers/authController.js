@@ -19,6 +19,16 @@ exports.login = async (req, res) => {
     }
 };
 
+exports.verifyOtp = async (req, res) => {
+    try {
+        const { email, otp } = req.body;
+        const result = await authService.verifyOtp(email, otp);
+        res.json({ success: true, ...result });
+    } catch (error) {
+        res.status(400).json({ success: false, message: error.message });
+    }
+};
+
 exports.adminLogin = async (req, res) => {
     try {
         const { username, password } = req.body;

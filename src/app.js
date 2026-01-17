@@ -8,6 +8,7 @@ const uploadRoutes = require('./routes/uploadRoutes');
 const authRoutes = require('./routes/authRoutes');
 const subcategoryRoutes = require('./routes/subcategoryRoutes');
 const healthTipRoutes = require('./routes/healthTipRoutes');
+const wishlistRoutes = require('./routes/wishlistRoutes');
 
 const app = express();
 
@@ -23,6 +24,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/subcategories', subcategoryRoutes);
 app.use('/api/health-tips', healthTipRoutes);
 app.use('/api/reviews', require('./routes/reviewRoutes'));
+app.use('/api/addresses', require('./routes/addressRoutes'));
+app.use('/api/wishlist', wishlistRoutes);
 
 app.get('/', (req, res) => {
     res.send("HomeVed API is running....");
