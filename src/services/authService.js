@@ -108,13 +108,24 @@ exports.loginUser = async (email, password) => {
 };
 
 exports.verifyOtp = async (email, otp) => {
+    console.log(`[verifyOtp Service] Checking OTP for email: ${email}`);
     const record = otpStore.get(email);
 
     if (!record) {
+        console.error(`[verifyOtp Service] No OTP record found for email: ${email}`);
         throw new Error("OTP not requested or already used");
     }
 
+    // Check expiration
+    if (Date.now() > record.expires) {
+        console.error(`[verifyOtp Service] OTP expired for email: ${email}`);
+        otpStore.delete(email);
+        throw new Error("OTP has expired. Please request a new one");
+    }
+
+    console.log(`[verifyOtp Service] Comparing OTPs - Provided: ${otp}, Stored: ${record.otp}`);
     if (record.otp !== otp) {
+        console.error(`[verifyOtp Service] Invalid OTP for email: ${email}`);
         throw new Error("Invalid verification code");
     }
 
@@ -122,12 +133,13 @@ exports.verifyOtp = async (email, otp) => {
     let token;
 
     if (record.type === 'registration') {
-        const { email, password, fullName, phone } = record.registrationData;
-        const username = email;
+        console.log(`[verifyOtp Service] Processing registration for email: ${email}`);
+        const { email: userEmail, password, fullName, phone } = record.registrationData;
+        const username = userEmail;
 
         const result = await pool.query(
             "INSERT INTO public.users (username, emailid, password, contactno, active, createdate, member_since) VALUES ($1, $2, $3, $4, true, NOW(), NOW()) RETURNING username, emailid, member_since",
-            [username, email, password, phone]
+            [username, userEmail, password, phone]
         );
 
         const newUser = result.rows[0];
@@ -141,6 +153,7 @@ exports.verifyOtp = async (email, otp) => {
         };
         token = generateToken(newUser.username, 'user');
     } else {
+        console.log(`[verifyOtp Service] Processing login verification for email: ${email}`);
         // Login verification
         user = record.userData;
         // Include memberSince for login as well
@@ -152,6 +165,7 @@ exports.verifyOtp = async (email, otp) => {
 
     // Clear OTP after success
     otpStore.delete(email);
+    console.log(`[verifyOtp Service] Successfully verified OTP for email: ${email}`);
 
     return {
         user,

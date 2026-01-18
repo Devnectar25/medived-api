@@ -22,9 +22,23 @@ exports.login = async (req, res) => {
 exports.verifyOtp = async (req, res) => {
     try {
         const { email, otp } = req.body;
+
+        // Validate required fields
+        if (!email || !otp) {
+            console.error('[verifyOtp] Missing required fields:', { email: !!email, otp: !!otp });
+            return res.status(400).json({
+                success: false,
+                message: 'Email and OTP are required',
+                details: { email: !email ? 'missing' : 'provided', otp: !otp ? 'missing' : 'provided' }
+            });
+        }
+
+        console.log(`[verifyOtp] Attempting to verify OTP for email: ${email}`);
         const result = await authService.verifyOtp(email, otp);
+        console.log(`[verifyOtp] Successfully verified OTP for email: ${email}`);
         res.json({ success: true, ...result });
     } catch (error) {
+        console.error('[verifyOtp] Error:', error.message);
         res.status(400).json({ success: false, message: error.message });
     }
 };
