@@ -23,7 +23,7 @@ exports.getProduct = async (req, res) => {
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in getProduct:", error);
-        res.status(500).json({ success: false, error: "Internal Server Error" });
+        res.status(500).json({ success: false, error: error.message });
     }
 };
 
@@ -73,7 +73,7 @@ exports.getRelatedProducts = async (req, res) => {
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in getRelatedProducts:", error);
-        res.status(500).json({ success: false, error: "Internal Server Error" });
+        res.status(500).json({ success: false, error: error.message });
     }
 };
 
@@ -84,7 +84,7 @@ exports.createProduct = async (req, res) => {
         res.status(201).json({ success: true, data });
     } catch (error) {
         console.error("Error in createProduct:", error);
-        res.status(500).json({ success: false, error: "Internal Server Error" });
+        res.status(500).json({ success: false, error: error.message });
     }
 };
 
@@ -101,7 +101,7 @@ exports.updateProduct = async (req, res) => {
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in updateProduct:", error);
-        res.status(500).json({ success: false, error: "Internal Server Error" });
+        res.status(500).json({ success: false, error: error.message });
     }
 };
 
@@ -117,7 +117,7 @@ exports.deleteProduct = async (req, res) => {
         res.json({ success: true, data, message: "Product deleted successfully" });
     } catch (error) {
         console.error("Error in deleteProduct:", error);
-        res.status(500).json({ success: false, error: "Internal Server Error" });
+        res.status(500).json({ success: false, error: error.message });
     }
 };
 
@@ -133,7 +133,7 @@ exports.setActiveProduct = async (req, res) => {
         res.json({ success: true, data, message: "Product activated successfully" });
     } catch (error) {
         console.error("Error in setActiveProduct:", error);
-        res.status(500).json({ success: false, error: "Internal Server Error" });
+        res.status(500).json({ success: false, error: error.message });
     }
 };
 
@@ -143,7 +143,7 @@ exports.getActiveProducts = async (req, res) => {
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in getActiveProducts:", error);
-        res.status(500).json({ success: false, error: "Internal Server Error" });
+        res.status(500).json({ success: false, error: error.message });
     }
 };
 
@@ -153,7 +153,7 @@ exports.getFeaturedProducts = async (req, res) => {
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in getFeaturedProducts:", error);
-        res.status(500).json({ success: false, error: "Internal Server Error" });
+        res.status(500).json({ success: false, error: error.message });
     }
 };
 
@@ -169,7 +169,7 @@ exports.setInactiveProduct = async (req, res) => {
         res.json({ success: true, data, message: "Product deactivated successfully" });
     } catch (error) {
         console.error("Error in setInactiveProduct:", error);
-        res.status(500).json({ success: false, error: "Internal Server Error" });
+        res.status(500).json({ success: false, error: error.message });
     }
 };
 
@@ -185,6 +185,6 @@ exports.toggleProductStatus = async (req, res) => {
         res.json({ success: true, data, message: "Product status toggled successfully" });
     } catch (error) {
         console.error("Error in toggleProductStatus:", error);
-        res.status(500).json({ success: false, error: "Internal Server Error" });
+        res.status(500).json({ success: false, error: error.message });
     }
 };

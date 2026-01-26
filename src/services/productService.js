@@ -17,7 +17,7 @@ const mapProduct = (p) => ({
     image: p.image || 'https://via.placeholder.com/300',
     images: p.product_images || [p.image || 'https://via.placeholder.com/300'], // Fallback to main image
     inStock: p.instock,
-    stockQuantity: p.stock_quantity || p.quantity || 0,
+    stockQuantity: p.stock_quantity !== undefined && p.stock_quantity !== null ? p.stock_quantity : (p.quantity || 0),
     benefits: p.benefits,
     ingredients: p.ingredients,
     usage: p.usage,
@@ -182,8 +182,8 @@ exports.createProduct = async (product) => {
 
     const result = await pool.query(
         `INSERT INTO products 
-        (productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, supports, product_images, expiryinfo, subcategory_id, specifications, active, createdate, updated_at) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW(), NOW()) 
+        (productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, stock_quantity, supports, product_images, expiryinfo, subcategory_id, specifications, active, createdate, updated_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16, $17, $18, $19, $20, $21, $22, NOW(), NOW()) 
         RETURNING *`,
         [productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity || 0, supports || [], images || [], expiryinfo, subcategory_id, specifications, active !== false]
     );
@@ -246,7 +246,9 @@ exports.updateProduct = async (id, product) => {
             discount = $7, category_id = $8, brand = $9, image = $10, instock = $11, promoted = $12,
             benefits = COALESCE($13, benefits), ingredients = COALESCE($14, ingredients), 
             usage = COALESCE($15, usage), directions = COALESCE($16, directions),
-            quantity = COALESCE($17, quantity), supports = COALESCE($18, supports),
+            quantity = COALESCE($17, quantity), 
+            stock_quantity = COALESCE($17, stock_quantity),
+            supports = COALESCE($18, supports),
             product_images = COALESCE($19, product_images),
             expiryinfo = $20, subcategory_id = $21, specifications = $22,
             active = COALESCE($23, active),

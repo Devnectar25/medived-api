@@ -26,9 +26,20 @@ app.use('/api/health-tips', healthTipRoutes);
 app.use('/api/reviews', require('./routes/reviewRoutes'));
 app.use('/api/addresses', require('./routes/addressRoutes'));
 app.use('/api/wishlist', wishlistRoutes);
+app.use('/api/cart', require('./routes/cartRoutes'));
+app.use('/api/orders', require('./routes/orderRoutes'));
 
 app.get('/', (req, res) => {
     res.send("HomeVed API is running....");
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+    console.error('SERVER ERROR:', err.stack);
+    res.status(500).json({
+        success: false,
+        error: "Internal Server Error"
+    });
 });
 
 module.exports = app;

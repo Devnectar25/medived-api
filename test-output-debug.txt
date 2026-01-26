@@ -1,0 +1,1912 @@
+﻿[dotenv@17.2.3] injecting env (9) from .env -- tip: ≡ƒöÉ encrypt with Dotenvx: https://dotenvx.com
+[dotenv@17.2.3] injecting env (0) from .env -- tip: ΓÜÖ∩╕Å  suppress all logs with { quiet: true }
+Using user: testuser5@example.com
+Generated Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6InRlc3R1c2VyNUBleGFtcGxlLmNvbSIsInJvbGUiOiJ1c2VyIiwiaWF0IjoxNzY5NDE1MTQzLCJleHAiOjE3Njk0MTg3NDN9.RgsrYFKXnwfi83oWzWNXzIcS25irz37My7cuxs33rKA
+[DEBUG] app.js loading from: C:\workspace\reactShop-home backend\medived-api\src\app.js
+[DEBUG] productController loaded
+[dotenv@17.2.3] injecting env (0) from .env -- tip: ≡ƒöÉ encrypt with Dotenvx: https://dotenvx.com
+[DEBUG] productController keys: [
+  'getProducts',
+  'getProduct',
+  'getRelatedProducts',
+  'createProduct',
+  'updateProduct',
+  'deleteProduct',
+  'setActiveProduct',
+  'getActiveProducts',
+  'getFeaturedProducts',
+  'setInactiveProduct',
+  'toggleProductStatus'
+]
+Test Server started on port 4005
+
+Pinging server...
+[DEBUG] PING hit
+Ping Result: { pong: true }
+
+Fetching a product...
+[DEBUG] GET /api/products?limit=1
+[DEBUG] getProducts called
+Products API Response: {
+  "success": true,
+  "data": [
+    {
+      "id": "445",
+      "name": "Zandu Ayurvedic Hair Growth Mask (200 g)",
+      "brand": "Zandu",
+      "category": "Hair, Skin and Oral Care",
+      "categoryId": 7,
+      "shortDescription": "Ayurvedic hair mask for hair growth, hair fall control, and deep scalp nourishment.",
+      "description": "Zandu Ayurvedic Hair Growth Mask is a 100% Ayurvedic hair care solution crafted with 26 powerful herbs like Rosemary Oil, Amalaki, Bhringraj, Almond Oil, Sesame Oil, and Coconut Oil. It promotes hair growth, reduces hair fall, strengthens roots, and provides deep nourishment for smooth and shiny hair. Free from harmful chemicals, mineral oil, parabens, artificial fragrances, and colours, this mask penetrates the scalp to deliver essential nutrients directly to hair follicles. Backed by over 110+ years of ZanduΓÇÖs trust, it is scientifically proven to enhance hair health and vitality.",
+      "price": 486,
+      "originalPrice": 486,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769023735953/1769024309658-1d2uo9.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769023735953/1769024309658-1d2uo9.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769023735953/1769024310026-s0mgm.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769023735953/1769024309723-847uyq.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769023735953/1769024309968-5vedxg.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769023735953/1769024310313-m4ylja.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 2,
+      "benefits": [
+        "Complete hair and scalp nourishment",
+        "Promotes hair growth",
+        "Reduces hair fall",
+        "Strengthens roots",
+        "Adds luster and strength",
+        "Helps detangle hair",
+        "Makes hair soft and shiny",
+        "Reduces dandruff"
+      ],
+      "ingredients": [
+        "Rosemary Oil",
+        "Bhringraj",
+        "Amalaki",
+        "Badam (Almond Oil)",
+        "Nariyal (Coconut Oil)",
+        "Tila (Sesame Oil)",
+        "Japa (Hibiscus)",
+        "Neem",
+        "Methi"
+      ],
+      "usage": [
+        "Apply approximately 10ΓÇô15 g of mask to clean, damp hair. Massage onto scalp and hair lengths. Leave for 5ΓÇô10 minutes, then rinse thoroughly. Use 2ΓÇô3 times a week."
+      ],
+      "directions": "Take 10ΓÇô15 g of hair mask\nApply to clean, damp hair\nMassage onto scalp and hair length\nLeave for 5ΓÇô10 minutes\nRinse thoroughly with water\nUse 2ΓÇô3 times a week",
+      "supports": [
+        "Hair Growth",
+        "Hair Fall Control",
+        "Scalp Nourishment",
+        "Dandruff Care",
+        ", Ayurvedic Hair Mask"
+      ],
+      "expiryInfo": "",
+      "subCategory": "Hair Care",
+      "subCategoryId": 4,
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "444",
+      "name": "Zandu Neelibhringar Hair Oil 100 ml",
+      "brand": "Zandu",
+      "category": "Hair, Skin and Oral Care",
+      "categoryId": 7,
+      "shortDescription": "Ayurvedic hair oil for hair growth, hair fall control, and stronger hair roots.",
+      "description": "Zandu Neelibhringar Hair Oil is a 600+ year-old traditional Ayurvedic hair growth oil made using the ancient Taila Pak Vidhi process. Enriched with 16 scientifically tested Ayurvedic ingredients, it targets multiple hair concerns like hair fall, weak hair, split ends, and rough hair. This 3-in-1 action formula promotes hair growth, strengthens hair, and nourishes the scalp. Free from artificial colours, mineral oils, and parabens, it is 100% Ayurvedic and backed by over 100 years of ZanduΓÇÖs trust. Regular use through Shiro Abhyanga (Ayurvedic head massage) helps improve scalp health and unlock stronger, healthier hair.",
+      "price": 261,
+      "originalPrice": 261,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769022721149/1769023032647-giv7uc.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769022721149/1769023032647-giv7uc.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769022721149/1769023031292-abux8o.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769022721149/1769023031986-s8ld.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769022721149/1769023032962-vwfmgb.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769022721149/1769023032674-2x06vz.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 56,
+      "benefits": [
+        "Promotes hair growth",
+        "Reduces hair fall",
+        "Strengthens hair",
+        "Nourishes scalp and hair",
+        "Improves overall hair health"
+      ],
+      "ingredients": [
+        "Bhringraj",
+        "Til Tel (Sesame Oil)",
+        "Nagkesar",
+        "Chandana (Sandalwood)",
+        "Shveta Sariva",
+        "Yasti",
+        "Nili (Indigo)",
+        "Manjistha"
+      ],
+      "usage": [
+        "Take 5ΓÇô10 ml of oil on your palm. Apply evenly on scalp from roots to tips. Massage gently using fingertips. Leave on for 2ΓÇô3 hours or overnight. Use before every hair wash."
+      ],
+      "directions": "Take 5ΓÇô10 ml oil based on hair length\nApply evenly on scalp\nMassage gently using fingertips\nLeave for 2ΓÇô3 hours or overnight\nWash hair as usual\nUse before every hair wash for best results",
+      "supports": [
+        "Hair Growth",
+        "Hair Fall Control",
+        "Scalp Nourishment",
+        "Ayurvedic Hair Oil",
+        "Strong Hair"
+      ],
+      "expiryInfo": "",
+      "subCategory": "Hair Care",
+      "subCategoryId": 4,
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "443",
+      "name": "Zandu Nityam Ayurvedic Laxative",
+      "brand": "Zandu",
+      "category": " Herbal Supplements ",
+      "categoryId": 4,
+      "shortDescription": "Ayurvedic laxative tablet for regular bowel movement and relief from constipation.",
+      "description": "Zandu Nityam Ayurvedic Laxative is a gentle yet effective herbal formulation designed to promote regular bowel movements and improve overall digestive health. Made with natural laxative and carminative herbs, it helps relieve both occasional and chronic constipation. Key ingredients like Senna, Haritaki, Vidanga, and Ajwain support healthy digestion, reduce bloating, and eliminate toxins. Regular use ensures a safe, natural solution for digestive discomfort and constipation.",
+      "price": 107.5,
+      "originalPrice": 107.5,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769021875153/1769022181992-t02xz.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769021875153/1769022181992-t02xz.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769021875153/1769022182238-r2akaq.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769021875153/1769022182494-j707x.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769021875153/1769022181779-b3cwbf.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769021875153/1769022181980-jgrjr.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 0,
+      "benefits": [
+        "Relieves chronic constipation",
+        "Supports digestion",
+        "Eliminates toxins",
+        "Helps with gas and bloating",
+        "Promotes regular bowel movement"
+      ],
+      "ingredients": [
+        "Svarnapatri",
+        "Haritaki",
+        "Yasti",
+        "Triphala",
+        "Mishreya",
+        "Sanchal",
+        "Sarjika Kshara",
+        "Oil of Eranda Seeds"
+      ],
+      "usage": [
+        "Adults and children above 12 years: 2 tablets at bedtime with water.",
+        "Children 6ΓÇô12 years: 1 tablet at bedtime with water.",
+        "Follow doctorΓÇÖs advice for dosage."
+      ],
+      "directions": "Take recommended number of tablets\nConsume at bedtime\nSwallow with water\nFollow age-based dosage\nUse regularly as advised",
+      "supports": [
+        "Constipation Relief",
+        "Digestive Health",
+        "Bowel Regulation",
+        "Detox Support",
+        "Ayurvedic Laxative"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "442",
+      "name": "Patanjali Pachak Anardana Goli",
+      "brand": "Patanjali",
+      "category": "Natural Health Care",
+      "categoryId": 8,
+      "shortDescription": "Digestive goli that aids digestion and relieves acidity, indigestion, and constipation.",
+      "description": "Patanjali Pachak Anardana Goli is a tasty Ayurvedic digestive supplement with a harmonious blend of sweetness and tanginess. It supports healthy digestion and helps relieve common stomach issues such as acidity, indigestion, and constipation. Made with natural ingredients, these golis not only improve appetite and digestion but also strengthen the digestive system. Regular use makes it a refreshing and effective digestive aid.",
+      "price": 42,
+      "originalPrice": 42,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769020744335/1769021167010-ytphab9.png",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769020744335/1769021167010-ytphab9.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769020744335/1769021168973-surqkj.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769020744335/1769021168669-obi0al.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769020744335/1769021168229-47mmi.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769020744335/1769021164594-846wy9.png"
+      ],
+      "inStock": true,
+      "stockQuantity": 55,
+      "benefits": [
+        "Aids digestion",
+        "Helps relieve acidity",
+        "Relieves indigestion",
+        "Helps manage constipation",
+        "Strengthens digestive system",
+        "Pleasant sweet and tangy taste"
+      ],
+      "ingredients": [
+        "Chini",
+        "Anardana",
+        "Amchur",
+        "Jeera",
+        "Samudra Lavan",
+        "Dhaniya",
+        "Kali Mirch",
+        "Dalchini",
+        "Badi Elaichi",
+        "Chhoti Pipal",
+        "Saunf"
+      ],
+      "usage": [
+        "Take 2ΓÇô5 g twice daily or as directed by your physician."
+      ],
+      "directions": "Measure 2ΓÇô5 g of goli\nTake twice daily\nConsume after meals\nFollow physicianΓÇÖs advice\nContinue regularly for best results",
+      "supports": [
+        "Digestive Health",
+        "Acidity Relief",
+        "Indigestion Care",
+        "Constipation Relief",
+        "Stomach Care",
+        "Ayurvedic Digestive"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "441",
+      "name": "Patanjali Amrit Rasayan",
+      "brand": "Patanjali",
+      "category": "Natural Health Care",
+      "categoryId": 8,
+      "shortDescription": "Ayurvedic tonic to improve memory, mental strength, and overall physical well-being.",
+      "description": "Patanjali Amrit Rasayan is a powerful Ayurvedic formulation made with Brahmi, Amla, Saffron, Ghee, Almond, and other special herbs. It is designed to enhance physical and mental health, improve memory, and boost overall vitality. This tonic nourishes the body, supports brain function, improves concentration, and helps maintain long-term wellness. Regular use rejuvenates the body and mind while strengthening immunity and digestive health.",
+      "price": 262,
+      "originalPrice": 262,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769018129242/1769018865347-3y3bq3.png",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769018129242/1769018865347-3y3bq3.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769018129242/1769018865904-f0unup.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769018129242/1769018870714-9wwqwb.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769018129242/1769018865453-fi4qen.png"
+      ],
+      "inStock": true,
+      "stockQuantity": 62,
+      "benefits": [
+        "Enhances learning, concentration, and memory",
+        "Provides essential nutrients",
+        "Maintains overall health and vitality",
+        "Detoxifies digestive system",
+        "Relieves constipation, indigestion, acidity, and flatulence",
+        "Rejuvenates and revitalizes the body",
+        "Reduces mental tiredness",
+        "Supports skin and eye health"
+      ],
+      "ingredients": [
+        "Sugar",
+        "Kesar",
+        "Brahmi",
+        "Shankhpushpi",
+        "Shatavari",
+        "Vanshlochan,",
+        "Laghu Ela",
+        "Dalchini",
+        "Shuddh Kaunch Beej",
+        "Badi Pippali"
+      ],
+      "usage": [
+        "Children above 6 years: 1 teaspoon.",
+        "Adults: 1ΓÇô2 teaspoons with lukewarm milk in the morning and evening or as directed by a physician."
+      ],
+      "directions": "Measure recommended dosage\nTake with lukewarm milk\nConsume morning and evening\nFollow physicianΓÇÖs advice\nContinue regularly for best results",
+      "supports": [
+        "Memory Booster",
+        "Brain Tonic",
+        "Mental Wellness",
+        "Vitality Support",
+        "Digestive Health",
+        "Ayurvedic Rasayan"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "440",
+      "name": "Baidyanath Madhumehari Granules, 100 gm",
+      "brand": "Baidyanath",
+      "category": "Health Concerns",
+      "categoryId": 14,
+      "shortDescription": "Ayurvedic granules for managing diabetes and maintaining healthy blood sugar levels.",
+      "description": "Baidyanath Madhumehari Granules is a powerful Ayurvedic formulation designed to help manage diabetes and promote overall health and well-being. Made from a blend of natural herbs used in Ayurveda for centuries, these granules help regulate insulin production, enhance glucose metabolism, and maintain healthy blood sugar levels. Regular use reduces the risk of diabetes-related complications and also supports immunity, digestion, and stress reduction.",
+      "price": 196.5,
+      "originalPrice": 196.5,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769016789408/1769017260939-hvjac.png",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769016789408/1769017260939-hvjac.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769016789408/1769017263300-ka44fy.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1769016789408/1769017259807-ii0f6e.png"
+      ],
+      "inStock": true,
+      "stockQuantity": 50,
+      "benefits": [
+        "Regulates blood sugar levels",
+        "Enhances insulin function",
+        "Made from natural ingredients",
+        "Possesses antioxidant properties",
+        "Boosts immunity",
+        "Improves digestion",
+        "Reduces stress",
+        "Convenient and easy to use"
+      ],
+      "ingredients": [
+        "Momordica charantia",
+        "Gymnema sylvestre"
+      ],
+      "usage": [
+        "Take 3ΓÇô5 g twice daily. Mix with warm water or milk. Stir well until dissolved."
+      ],
+      "directions": "Measure 3ΓÇô5 g of granules\nMix with warm water or milk\nStir until fully dissolved\nConsume twice daily\nFollow physicianΓÇÖs advice if required",
+      "supports": [
+        "Diabetic Care",
+        "Herbal Diabetes Management",
+        "Insulin Support",
+        "Blood Sugar Control",
+        "Antioxidant Support"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "428",
+      "name": "Himalaya Septilin, 60 Tablets",
+      "brand": "Himalaya ",
+      "category": " Herbal Supplements ",
+      "categoryId": 4,
+      "shortDescription": "Herbal immune booster tablet to strengthen body defence and fight infections naturally.",
+      "description": "Himalaya Septilin Tablets are specially formulated to strengthen the bodyΓÇÖs natural defence system and support a healthy immune response. Enriched with powerful herbs like Guduchi, Manjistha, and Yashtimadhu, this natural supplement helps the body fight infections, supports respiratory health, and promotes overall wellness. Ideal for people with recurring colds or weak immunity, Septilin provides a safe and effective herbal solution without harmful side effects.",
+      "price": 257.5,
+      "originalPrice": 257.5,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/428/1769015275315-1o2g79.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/428/1769015275315-1o2g79.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/428/1769015276995-xxmwm4.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/428/1769015275989-18c2tm.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/428/1769015278575-6qi3.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/428/1769015278674-q7rxmm.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 38,
+      "benefits": [
+        "Strengthens immune system",
+        "Supports respiratory health",
+        "Promotes detoxification",
+        "Improves digestive health",
+        "Natural and safe herbal formula"
+      ],
+      "ingredients": [
+        "Guduchi (Tinospora cordifolia)",
+        "Manjistha,",
+        "Amalaki",
+        "Shigru",
+        "Yashtimadhu"
+      ],
+      "usage": [
+        "Consult your physician for correct dosage. Take tablets as prescribed, preferably after meals, and swallow with water."
+      ],
+      "directions": "Consult your doctor for dosage\nTake tablets as prescribed\nConsume after meals\nSwallow whole with water\nContinue regularly for best results",
+      "supports": [
+        "Immunity Booster",
+        "Infection Protection",
+        "Respiratory Support",
+        "Detox Support",
+        "Herbal Supplement"
+      ],
+      "expiryInfo": "NA",
+      "subCategory": "Boosts Stamina & Energy",
+      "subCategoryId": 3,
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "439",
+      "name": "Dhootapapeshwar Pittashekhar Rasa, 30 Tablets",
+      "brand": "Dhootapapeshwar",
+      "category": "Health Concerns",
+      "categoryId": 14,
+      "shortDescription": "Ayurvedic tablet for pitta balance, digestive health, and liver function support.",
+      "description": "Dhootapapeshwar Pittashekhar Rasa is a classical Ayurvedic formulation designed to manage disorders caused by vitiated pitta. It supports digestive health by improving appetite, enhancing digestion, and ensuring better nutrient absorption. This medicine also acts as a gentle laxative and carminative, relieving abdominal discomfort and promoting regular bowel movements. As a liver stimulant, it aids detoxification and metabolism, supporting optimal liver health. It is beneficial for conditions like amlapitta, heartburn, nausea, vomiting, abdominal pain, hiccups, loss of appetite, Jeerna Malavibandha, and gastric ulcers. Regular use promotes overall digestive and liver wellness.",
+      "price": 809,
+      "originalPrice": 809,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/439/1769015039068-gsw3x.png",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/439/1769015039068-gsw3x.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/439/1769015027420-vlhutc.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/439/1769015044212-sac6v.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/439/1769015044762-8k2qae.png"
+      ],
+      "inStock": true,
+      "stockQuantity": 35,
+      "benefits": [
+        "Improves digestive health",
+        "Acts as a natural laxative",
+        "Enhances liver function",
+        "Helps prevent gastric ulcers",
+        "Boosts appetite",
+        "Provides comprehensive relief from pitta disorders"
+      ],
+      "ingredients": [
+        "Sootashekhar Rasa",
+        "Bilva Majja",
+        "Aragvadh Majja",
+        "Kalamegha",
+        "Shankha Bhasma",
+        "Shouktik Bhasma",
+        "Kapardika Bhasma",
+        "Avipattikar Choorna"
+      ],
+      "usage": [
+        "Consume 1ΓÇô2 tablets twice or thrice daily. Take with ghee, milk, or amla murabba. Follow Ayurvedic doctorΓÇÖs advice."
+      ],
+      "directions": "Take 1ΓÇô2 tablets\nConsume twice or thrice daily\nTake with ghee, milk, or amla murabba\nFollow doctorΓÇÖs prescription\nContinue regularly for best results",
+      "supports": [
+        "Liver Care",
+        "Digestive Health",
+        "Pitta Balance",
+        "Gastric Relief",
+        "Appetite Booster",
+        "Ayurvedic Medicine"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "438",
+      "name": "Zandu Sugar Free Chyavanprashad, 900 gm",
+      "brand": "Zandu",
+      "category": "Health Concerns",
+      "categoryId": 14,
+      "shortDescription": "Sugar-free chyawanprash for diabetics to boost immunity, stamina, and overall wellness.",
+      "description": "Zandu Chyawanprashad Sugar Free is a scientifically backed Ayurvedic formulation that blends traditional wisdom with modern research. Made with powerful natural ingredients like amla, shilajit, ashwagandha, and giloy, it offers the goodness of classic chyawanprash without added sugar. This sugar-free health tonic is proven to boost immunity up to two times, build stamina, and support holistic well-being. It is 100% vegetarian and carefully manufactured to ensure quality and effectiveness, making it an ideal choice for sugar-conscious individuals and diabetics.",
+      "price": 468.5,
+      "originalPrice": 468.5,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768999682292/1769000006918-5mb45k.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768999682292/1769000006918-5mb45k.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768999682292/1769000006558-s2yde.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768999682292/1769000006678-7r8ew7.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768999682292/1769000006829-7u6cfk.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768999682292/1769000006855-xxgpnd.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 59,
+      "benefits": [
+        "Enhances immunity",
+        "Healthy alternative for sugar-conscious individuals",
+        "Builds stamina",
+        "Promotes holistic well-being",
+        "Suitable for vegetarians"
+      ],
+      "ingredients": [
+        "Amla",
+        "Shilajit",
+        "Ashwagandha",
+        "Giloy"
+      ],
+      "usage": [
+        "Consume 1ΓÇô2 spoons daily. Can be taken directly or with warm milk."
+      ],
+      "directions": "Take 1ΓÇô2 spoons daily\nConsume directly or with warm milk\nUse regularly for best results\nFollow physicianΓÇÖs advice if required",
+      "supports": [
+        "Diabetic Care",
+        "Sugar-Free Chyawanprash",
+        "Immunity Booster",
+        "Stamina Builder",
+        "Holistic Wellness"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "435",
+      "name": "Dabur Almond Shampoo",
+      "brand": "Dabur",
+      "category": "Hair, Skin and Oral Care",
+      "categoryId": 7,
+      "shortDescription": "Ultra-nourishing shampoo with almond and milk extracts for smooth, silky, and shiny hair.",
+      "description": "Dabur Almond Shampoo is an ultra-nourishing hair cleanser made with Almond Vita Complex and Milk extracts to replenish the scalp and make hair smooth and silky. Regular use helps strengthen hair fibers, improve shine, and protect hair from damage. Enriched with Vitamin E, it delays ageing of cells and protects hair from free radical damage, leaving your hair soft, healthy, and beautiful.",
+      "price": 233,
+      "originalPrice": 233,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768989543597/1768989828505-1sce4.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768989543597/1768989828505-1sce4.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768989543597/1768989828625-5n1iqq.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768989543597/1768989829013-pae8.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768989543597/1768989829239-q7a1rv.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768989543597/1768989829595-1s1e35.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 20,
+      "benefits": [
+        "Nourishes scalp and hair",
+        "Strengthens hair fibers",
+        "Makes hair silky soft and shiny",
+        "Protects from free radical damage",
+        "Delays ageing of hair cells"
+      ],
+      "ingredients": [
+        "Vitamin E",
+        "Almond Vita Complex",
+        "Milk Extracts"
+      ],
+      "usage": [
+        "Wet your hair. Squeeze shampoo into your palm and lather. Apply to scalp, massage gently, work along hair length, and rinse thoroughly."
+      ],
+      "directions": "Wet your hair thoroughly\nTake shampoo in your palm\nLather and apply to scalp\nGently massage\nWork along hair length\nRinse thoroughly with water",
+      "supports": [
+        "Hair Nourishment",
+        "Hair Strengthening",
+        "Silky Hair",
+        "Shine Booster",
+        "Damage Protection"
+      ],
+      "expiryInfo": "",
+      "subCategory": "Hair Care",
+      "subCategoryId": 4,
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "437",
+      "name": "Koflet Cough Syrup 100 ml",
+      "brand": "Himalaya ",
+      "category": "Health Concerns",
+      "categoryId": 14,
+      "shortDescription": "Honey-based Ayurvedic cough syrup for dry, acute, and chronic cough relief.",
+      "description": "Himalaya Koflet Cough Syrup is a honey-based Ayurvedic formulation designed to provide effective relief from different types of coughs, including dry, acute, and chronic cough. It helps soothe the throat, reduce bronchial irritation, and facilitate mucus expulsion to clear the respiratory tract. Enriched with natural ingredients like Liquorice Root and Holy Basil, it has anti-allergic, antimicrobial, antibacterial, and antioxidant properties. It also boosts immunity, supports respiratory health, and is effective for smokerΓÇÖs cough. With its pleasant taste and natural healing action, Koflet Syrup offers a safe and effective solution for cough and cold.",
+      "price": 117,
+      "originalPrice": 117,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768998745727/1768999037870-ioawr9.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768998745727/1768999037870-ioawr9.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768998745727/1768999037727-lghkj.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768998745727/1768999040392-kwiogm.png"
+      ],
+      "inStock": true,
+      "stockQuantity": 47,
+      "benefits": [
+        "Soothes the throat",
+        "Facilitates mucus expulsion",
+        "Reduces bronchial irritation",
+        "Boosts immune system",
+        "Effective for smokerΓÇÖs cough",
+        "Supports respiratory health"
+      ],
+      "ingredients": [
+        "Liquorice Root",
+        "Holy Basil, Honey"
+      ],
+      "usage": [
+        "Shake well before use. Follow the dosage mentioned on the label or as directed by your doctor."
+      ],
+      "directions": "Shake the bottle well before use\nMeasure recommended dose\nConsume orally\nFollow label or doctorΓÇÖs instructions\nContinue regularly for best results",
+      "supports": [
+        "Cold & Cough Relief",
+        "Respiratory Care",
+        "Throat Soothing",
+        "Immunity Booster",
+        "Ayurvedic Cough Syrup"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "436",
+      "name": "Himalaya Tulasi Respiratory Wellness, 60 Tablets",
+      "brand": "Himalaya ",
+      "category": "Health Concerns",
+      "categoryId": 14,
+      "shortDescription": "Herbal tulasi tablets for respiratory health, cough relief, and immune support.",
+      "description": "Himalaya Wellness Pure Herbs Tulasi Respiratory Wellness Tablets are a natural herbal solution designed to support respiratory health. Made from pure tulasi, a revered Ayurvedic herb, these tablets help suppress cough, mobilize mucus, and provide relief during cough and cold. With antimicrobial, anti-inflammatory, and mucolytic properties, tulasi helps combat respiratory infections, boost immunity, and support early recovery. Regular use helps maintain strong respiratory wellness and a healthy immune response.",
+      "price": 198,
+      "originalPrice": 198,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768994079620/1768998336358-xajv44.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768994079620/1768998336358-xajv44.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768994079620/1768998324806-hpz68.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768994079620/1768998339637-ebuoym.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768994079620/1768998331932-lohcs.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768994079620/1768998319297-nma2k.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 28,
+      "benefits": [
+        "Supports respiratory health",
+        "Combats respiratory infections",
+        "Boosts immunity",
+        "Anti-inflammatory properties",
+        "Provides optimum support during cough and cold",
+        "Supports early recovery"
+      ],
+      "ingredients": [
+        "Tulasi"
+      ],
+      "usage": [
+        "Take 1ΓÇô2 tablets twice daily or as directed by your doctor."
+      ],
+      "directions": "Take 1ΓÇô2 tablets\nConsume twice daily\nSwallow with water\nFollow doctorΓÇÖs advice\nContinue regularly for best results",
+      "supports": [
+        "Respiratory Care",
+        "Cold & Cough Relief",
+        "Immunity Booster",
+        "Antimicrobial Support",
+        "Herbal Wellness"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "434",
+      "name": "Dabur Honey Squeezy, 400 gm",
+      "brand": "Dabur",
+      "category": "Health Concerns",
+      "categoryId": 14,
+      "shortDescription": "Pure, unadulterated honey for immunity, fitness, nutrition, and natural energy.",
+      "description": "Dabur Honey Squeezy is 100% pure and unadulterated honey that offers multiple health benefits. Free from sugar adulteration, it helps boost immunity, support fitness, provide essential nutrition, and relieve cough and cold symptoms. Rich in natural antioxidants, it also serves as a natural energy booster. The convenient spill-proof squeezy bottle allows easy and controlled usage. Tested for purity and quality, it complies with all FSSAI standards and is packed in USFDA-registered facilities using honey sourced from the Himalayas and Sunderbans.",
+      "price": 361,
+      "originalPrice": 361,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768988752776/1768989245994-bt369g.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768988752776/1768989245994-bt369g.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768988752776/1768989245882-hqd8wm.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768988752776/1768989245860-4s8t8.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768988752776/1768989245790-34ykpa.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768988752776/1768989246124-crhrlo.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 60,
+      "benefits": [
+        "Supports fitness",
+        "Rich source of nutrition",
+        "Boosts immunity",
+        "Relieves cough and cold",
+        "Rich in antioxidants",
+        "Natural energy booster"
+      ],
+      "ingredients": [
+        "100% Honey"
+      ],
+      "usage": [
+        "Use as a sweetener in tea, drizzle on cereal, spread on toast, add to desserts, mix with warm water, or consume directly. Replace the cap after each use."
+      ],
+      "directions": "Open the squeezy bottle\nSqueeze required amount\nAdd to food or beverages\nConsume directly if needed\nReplace cap after use",
+      "supports": [
+        "Immunity Booster",
+        "Natural Energy",
+        "Antioxidant",
+        "Nutrition",
+        "Support",
+        "Cough & Cold Relief"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "433",
+      "name": "Dabur Sugar Free Chyawanprakash, 900 gm",
+      "brand": "Dabur",
+      "category": "Health Concerns",
+      "categoryId": 14,
+      "shortDescription": "Sugar-free chyawanprash for diabetics to boost immunity, stamina, and overall health.",
+      "description": "Dabur Sugar Free Chyawanprakash is specially designed for people looking to reduce sugar intake. This low-calorie Ayurvedic chyawanprash is enriched with natural antioxidants, essential vitamins, and powerful herbs. It helps strengthen immunity, improve stamina, and support healthy ageing. Suitable for diabetics, it also aids digestion and helps fight common illnesses like cough and cold. With rejuvenating and immunomodulatory properties, it enhances the bodyΓÇÖs ability to fight infections and promotes overall well-being.",
+      "price": 369.5,
+      "originalPrice": 369.5,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768988053947/1768988398324-4avlcd.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768988053947/1768988398324-4avlcd.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768988053947/1768988397349-fea5z4.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768988053947/1768988398929-khipkej.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768988053947/1768988398816-p1aisy.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768988053947/1768988398752-r65itb.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 70,
+      "benefits": [
+        "Supports overall health",
+        "Suitable for diabetes",
+        "Helps fight weakness",
+        "Provides healthy ageing benefits",
+        "Strengthens immunity system",
+        "Supports digestion",
+        "Easy to consume"
+      ],
+      "ingredients": [
+        "Bilya",
+        "Amla",
+        "Yashtimadhu",
+        "Gokshura",
+        "Brahmi",
+        "Pippali"
+      ],
+      "usage": [
+        "Adults should take 1 teaspoon (10 g) twice daily."
+      ],
+      "directions": "Take 1 teaspoon (10 g)\nConsume twice daily\nCan be taken directly or with milk\nFollow physicianΓÇÖs advice if required\nUse regularly for best results",
+      "supports": [
+        "Diabetic Care",
+        "Sugar-Free Chyawanprash",
+        "Immunity Booster",
+        "Healthy Ageing",
+        "Digestive Support"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "422",
+      "name": "Zandu Shilajit Capsule",
+      "brand": "Zandu",
+      "category": "Gym and Energy",
+      "categoryId": 3,
+      "shortDescription": "Daily energy supplement that boosts stamina, strength and reduces fatigue.",
+      "description": "Zandu Shilajit Capsule is a natural energy adaptogen designed to provide sustained energy throughout the day. It helps boost strength, stamina, and endurance while reducing fatigue caused by stress and busy schedules. Ideal for working professionals and active individuals, it supports immunity, recovery, and overall vitality, helping you stay active and finish your day strong.",
+      "price": 525,
+      "originalPrice": 525,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768931214084/1768931625630-mggh2j.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768931214084/1768931625630-mggh2j.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768931214084/1768931625543-nz2ohb.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768931214084/1768931625622-ph21di.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768931214084/1768931626062-j53vf8.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768931214084/1768931626082-na73vf.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 60,
+      "benefits": [
+        "Provides sustained energy throughout the day",
+        "Boosts strength, stamina and endurance",
+        "Reduces fatigue from stress and busy schedules",
+        "Supports immunity, recovery and overall vitality"
+      ],
+      "ingredients": [
+        "Shuddha Shilajit (Asphaltum) Extract ΓÇô 500 mg"
+      ],
+      "usage": [
+        "Take one capsule with a meal, twice daily. Use consistently for at least 3 months to see best results."
+      ],
+      "directions": "Take one capsule with a meal\nConsume twice daily\nContinue regularly for at least 3 months\nFollow physician advice if needed",
+      "supports": [
+        "Energy Booster",
+        "Stamina Support",
+        "Stress Recovery",
+        "Immunity Support",
+        "Vitality Supplement"
+      ],
+      "expiryInfo": "2 years from the date of manufacturing",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "431",
+      "name": "Baidyanath Swarna Bhasma, 125 mg",
+      "brand": "Baidyanath",
+      "category": " Herbal Supplements ",
+      "categoryId": 4,
+      "shortDescription": "Ayurvedic gold-based supplement for immunity, rejuvenation, and overall wellness.",
+      "description": "Baidyanath Nagpur Swarna Bhasma is a classical Ayurvedic formulation made from purified gold using traditional methods of purification and calcination. This bioavailable gold preparation helps balance all three doshasΓÇövata, pitta, and kapha. It supports immunity, promotes overall well-being, and contributes to healthy skin, hair, and nails. Used as a Rasayana (rejuvenating) supplement, it is valued for longevity and vitality. For best results, it should be taken under the guidance of an Ayurvedic practitioner.",
+      "price": 2737,
+      "originalPrice": 2737,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768985445932/1768986130310-ruqudeg.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768985445932/1768986130310-ruqudeg.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768985445932/1768986129834-e2jthk.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768985445932/1768986129747-12wvbv.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 16,
+      "benefits": [
+        "Boosts overall health",
+        "Provides holistic care",
+        "Supports immune system",
+        "Promotes skin, hair, and nail health",
+        "Acts as a longevity supplement"
+      ],
+      "ingredients": [
+        "Tulsi Panchang",
+        "Malla (Sankhia)",
+        "Sona Bhasma (Gold Powder)"
+      ],
+      "usage": [
+        "Take 20ΓÇô50 mg twice daily or as advised by your physician. Consume under Ayurvedic supervision."
+      ],
+      "directions": "Measure 20ΓÇô50 mg of Swarna Bhasma\nTake twice daily\nConsume with honey, ghee, or as prescribed\nUse only under physician guidance\nContinue for recommended duration",
+      "supports": [
+        "Rasayana, Rejuvenation",
+        "Immunity Booster",
+        "Longevity Support",
+        "Skin & Hair Health",
+        "Ayurvedic Gold Supplement"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "432",
+      "name": "Baidyanath Siddha Makardhwaj Special, 10 Tablets",
+      "brand": "Baidyanath",
+      "category": " Herbal Supplements ",
+      "categoryId": 4,
+      "shortDescription": "Ayurvedic rejuvenation tablet to boost immunity, vitality, stamina, and overall wellness.",
+      "description": "Baidyanath Siddha Makardhwaj Special is a classical Ayurvedic formulation made from powerful ingredients such as Makardhwaj, Swarna Bhasma (gold), Moti Bhasma (pearl), Shuddha Parada, and purified sulphur. This potent blend rejuvenates the body, increases energy levels, and enhances stamina. It supports immunity, improves vitality, and promotes overall physical and mental well-being. The formulation also helps calm the mind, reduce stress, and manage chronic skin conditions. It is a comprehensive Rasayana supplement for long-term health and strength.",
+      "price": 1381.5,
+      "originalPrice": 1381.5,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768986581240/1768986927448-9n2jpg.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768986581240/1768986927448-9n2jpg.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768986581240/1768986927381-rz0hc.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768986581240/1768986927290-ky3msle.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768986581240/1768986927383-si96r9.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768986581240/1768986927530-xhkm7.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 34,
+      "benefits": [
+        "Boosts immunity",
+        "Enhances vitality",
+        "Improves stamina and strength",
+        "Relieves stress",
+        "Helps manage chronic skin conditions",
+        "Improves overall health"
+      ],
+      "ingredients": [
+        "Swarna Bhasma",
+        "Shuddha Swarna",
+        "Shuddha Parada",
+        "Shuddha Gandhaka",
+        "Purified Sulphur"
+      ],
+      "usage": [
+        "Read the label carefully for dosage as per age. Usually taken with honey or a suitable anupana (medium). Use under supervision of a qualified Ayurvedic practitioner."
+      ],
+      "directions": "Check dosage instructions on the label\nTake as advised by physician\nConsume with honey or suitable anupana\nUse under Ayurvedic supervision\nContinue regularly for best results",
+      "supports": [
+        "Immunity Booster",
+        "Rasayana",
+        "Vitality Support",
+        "Stress Relief",
+        "Skin Health",
+        "Ayurvedic Rejuvenation"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "430",
+      "name": "Thandai Powder",
+      "brand": "Patanjali",
+      "category": "Natural Health Care",
+      "categoryId": 8,
+      "shortDescription": "Nutritious thandai powder with dry fruits and spices for summer refreshment and wellness.",
+      "description": "Patanjali Thandai Powder is a delicious and nutritious traditional drink mix made with saffron, almonds, pistachios, and exotic spices. Enriched with dry fruits, it helps keep the body healthy and hydrated during summer. This trans-fat-free and cholesterol-free beverage supports immunity and overall wellness. It is easy to prepare and can be enjoyed as a refreshing and healthy drink.",
+      "price": 235,
+      "originalPrice": 235,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768984576673/1768985022280-n6wjla.png",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768984576673/1768985022280-n6wjla.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768984576673/1768985020990-qht8jj.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768984576673/1768985020503-kybwjp.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768984576673/1768985021653-q22dmn.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768984576673/1768985021196-2qe55.png"
+      ],
+      "inStock": true,
+      "stockQuantity": 31,
+      "benefits": [
+        "Highly nutritious due to presence of dry fruits",
+        "Keeps body healthy and hydrated in summer",
+        "Improves immunity",
+        "Trans-fat-free and cholesterol-free"
+      ],
+      "ingredients": [
+        "Sugar",
+        "Almond",
+        "Makhane",
+        "Cardamom",
+        "Magaj",
+        "Black Pepper",
+        "Khas Khas",
+        "Pistachio Nuts",
+        "Saffron"
+      ],
+      "usage": [
+        "Mix 30ΓÇô35 g (about 2 tablespoons) of thandai powder with 200 ml of pre-boiled and chilled milk."
+      ],
+      "directions": "Take 30ΓÇô35 g of thandai powder\nAdd to 200 ml chilled milk\nStir well until mixed\nServe chilled\nConsume fresh",
+      "supports": [
+        "Summer Drink",
+        "Immunity Support",
+        "Hydration",
+        "Energy Booster",
+        "Nutritional Beverage"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "356",
+      "name": "Bael Patra Powder",
+      "brand": "Dabur",
+      "category": "Ayurvedic Immunity Boosters",
+      "categoryId": 5,
+      "shortDescription": "Powder ",
+      "description": "Take 1 tsp of Bael Patra powder Mix powder in 1 glass (300 ml) of warm water Take empty stomach in morning & 30 mins post dinner.",
+      "price": 157.2,
+      "originalPrice": 157.2,
+      "discount": 0,
+      "rating": 4,
+      "reviews": 4,
+      "image": "https://images.unsplash.com/photo-1631549916768-4119b2e5f926?q=80&w=800",
+      "images": [
+        "https://images.unsplash.com/photo-1631549916768-4119b2e5f926?q=80&w=800",
+        "https://images.unsplash.com/photo-1505751172876-fa1923c5c528?q=80&w=2070&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1542838132-92c53300491e?q=80&w=1974&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?q=80&w=2070&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?q=80&w=2030&auto=format&fit=crop"
+      ],
+      "inStock": true,
+      "stockQuantity": 10,
+      "benefits": [
+        "Supports immune system health",
+        "Promotes overall wellness",
+        "Natural ingredients for better absorption",
+        "Clinically tested formula"
+      ],
+      "ingredients": [
+        "Ashwagandha Root Extract",
+        "Turmeric",
+        "Ginger",
+        "Black Pepper Extract"
+      ],
+      "usage": [
+        "Take 1 tablet twice a day",
+        "Best consumed with warm milk",
+        "Use consistency for 3 months"
+      ],
+      "directions": "Take 1-2 tablets daily with warm water or milk, preferably after meals. Consult your physician for dosage appropriate for your specific condition.",
+      "supports": [
+        "Immunity",
+        "General Wellness",
+        "Joint Health"
+      ],
+      "expiryInfo": "",
+      "subCategory": "Stress Relief",
+      "subCategoryId": 2,
+      "specifications": null,
+      "promoted": false,
+      "active": false
+    },
+    {
+      "id": "429",
+      "name": "Patanjali Pachak Jaljeera",
+      "brand": "Patanjali",
+      "category": "Natural Health Care",
+      "categoryId": 8,
+      "shortDescription": "Digestive powder that helps improve digestion, regulate body temperature, and relieve acidity.",
+      "description": "Patanjali Pachak Jaljeera is a traditional Ayurvedic digestive supplement that supports healthy digestion and helps regulate body temperature. Commonly served as an appetizer, this refreshing digestive drink helps combat acidity, improves appetite, and relieves indigestion. It also addresses issues like amla pitta, sluggish digestion, and reduced appetite while providing essential minerals for overall bodily functions. Regular use promotes better digestion and serves as an invigorating tonic.",
+      "price": 85,
+      "originalPrice": 85,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768983817074/1768984208344-ncpxg6.png",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768983817074/1768984208344-ncpxg6.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768983817074/1768984208911-ievhce.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768983817074/1768984208043-mvbd5a.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768983817074/1768984208265-8eazd.png",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768983817074/1768984207871-1l997.png"
+      ],
+      "inStock": true,
+      "stockQuantity": 20,
+      "benefits": [
+        "Helps combat acidity",
+        "Aids digestion",
+        "Enhances appetite",
+        "Contains essential minerals",
+        "Supports overall bodily functions",
+        "Serves as an invigorating tonic",
+        "Addresses amla pitta, indigestion, and sluggishness"
+      ],
+      "ingredients": [
+        "Samudra Lavan",
+        "Sendha Lavan",
+        "Pudina",
+        "Kala Lavan",
+        "Amchur",
+        "Jeera",
+        "Dhaniya",
+        "Kali Mirch",
+        "Nousadar",
+        "Chhoti Peepal",
+        "Saunth",
+        "Lal Mirch",
+        "Hing"
+      ],
+      "usage": [
+        "Take 2ΓÇô5 g daily or as directed by your physician."
+      ],
+      "directions": "Measure 2ΓÇô5 g of powder\nTake once daily\nMix with water if required\nConsume after meals or as advised\nFollow physicianΓÇÖs instructions",
+      "supports": [
+        "Digestive Health",
+        "Acidity Relief",
+        "Appetite Booster",
+        "Stomach Care",
+        "Ayurvedic Digestive Powder"
+      ],
+      "expiryInfo": "",
+      "subCategory": "Digestive Disorders / Stomach Care",
+      "subCategoryId": 7,
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "427",
+      "name": "Dhootapapeshwar Amlapitta Mishran Suspension, 450 ml",
+      "brand": "Dhootapapeshwar",
+      "category": " Herbal Supplements ",
+      "categoryId": 4,
+      "shortDescription": "Ayurvedic suspension for hyperacidity, nausea, vomiting, and improved digestive and immune health.",
+      "description": "Dhootapapeshwar Amlapitta Mishran Suspension is a comprehensive Ayurvedic solution for hyperacidity, nausea, and vomiting. This herbal formulation reduces inflammation in the digestive system, regulates pitta secretion, and supports balanced digestion. It also helps strengthen immunity and improve overall wellness. With a powerful blend of natural ingredients, it offers effective and affordable relief from digestive discomfort and related ailments when used regularly as directed.",
+      "price": 270,
+      "originalPrice": 270,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768945617463/1768946314144-q9tn2.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768945617463/1768946314144-q9tn2.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768945617463/1768946314433-xvc43k.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768945617463/1768946314061-xc8jcl.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 58,
+      "benefits": [
+        "Reduces inflammation in the digestive system",
+        "Regulates pitta secretion",
+        "Strengthens the immune system",
+        "Relieves hyperacidity",
+        "Effective against nausea and vomiting",
+        "Improves overall digestive healt"
+      ],
+      "ingredients": [
+        "Vasa 100 mg",
+        "Guduchi 100 mg",
+        "Pittapapada 100 mg",
+        "Nimba 100 mg",
+        "Chiraita 100 mg",
+        "Bhrungaraj 100 mg",
+        "Triphala 100 mg",
+        "Patol 100 mg",
+        "Yashtimadhu 100 mg",
+        "Shouktik Bhasma 500 mg"
+      ],
+      "usage": [
+        "Shake well before use. Take 5ΓÇô10 ml three times daily or as directed by your physician. Can be taken before or after meals."
+      ],
+      "directions": "Shake the bottle thoroughly before use\nMeasure 5ΓÇô10 ml as prescribed\nTake orally three times a day\nConsume before or after meals as directed\nContinue regularly for best results",
+      "supports": [
+        "Digestive Health",
+        "Hyperacidity Relief",
+        "Pitta Balance",
+        "Immunity Support",
+        "Nausea Control",
+        ",Ayurvedic Suspension"
+      ],
+      "expiryInfo": "NA",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "426",
+      "name": "Dhootapapeshwar Swamala, 500 gm",
+      "brand": "Dhootapapeshwar",
+      "category": " Herbal Supplements ",
+      "categoryId": 4,
+      "shortDescription": "Ayurvedic chyawanprash health tonic for boosting immunity, energy, and overall family wellness.",
+      "description": "Dhootapapeshwar Swamala is a classical Ayurvedic chyawanprash prepared from high-quality amlas and enriched with precious bhasmas such as Suvarna (gold) and Rajata (silver). Processed in pure cow ghee and blended with rasayan makardhwaj, forest honey, and powerful herbs, it nourishes all body tissues from rasa to shukra and strengthens ojas. Regular use boosts immunity, restores vitality, enhances physical and mental health, and improves overall quality of life. Ideal for growing children and adults, it supports nutrition, prevents recurrent illnesses, and serves as a year-round family health tonic.",
+      "price": 1653,
+      "originalPrice": 1653,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768944207403/1768945378555-5whdtj.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768944207403/1768945378555-5whdtj.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768944207403/1768945378440-nqadxe.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768944207403/1768945378587-prh51v.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768944207403/1768945379179-eogazx.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 53,
+      "benefits": [
+        "Boosts immunity levels",
+        "Promotes total health and wellness",
+        "Provides nutrition for growing children",
+        "Prevents recurrence of diseases",
+        "Supports preventive healthcare",
+        "Enhances energy and vitality"
+      ],
+      "ingredients": [
+        "Chyavanprash (Ashtavarga)",
+        "Suvarna Bhasma",
+        "Roupya Bhasma",
+        "Abhraka Bhasma",
+        "Kantaloha Bhasma",
+        "Pravala Pishti",
+        "Makardhwaj (Poornachandrodaya)",
+        "Preventive Health"
+      ],
+      "usage": [
+        "Take 1ΓÇô2 tablespoons in the morning and evening on an empty stomach or as per agnibala and physicianΓÇÖs advice."
+      ],
+      "directions": "Take 1ΓÇô2 tablespoons daily\nConsume morning and evening on an empty stomach\nAdjust dosage according to digestion strength (agnibala)\nFollow physicianΓÇÖs advice for best results",
+      "supports": [
+        "Immunity Booster",
+        "Family Health Tonic",
+        "Energy & Vitality",
+        "Child Nutrition"
+      ],
+      "expiryInfo": "NA",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "425",
+      "name": "Himalaya Pilex",
+      "brand": "Himalaya ",
+      "category": " Herbal Supplements ",
+      "categoryId": 4,
+      "shortDescription": "Herbal tablet for the treatment and management of piles (haemorrhoids) and related discomfort.",
+      "description": "Himalaya Pilex Tablet is an all-natural herbal formulation designed to manage piles (haemorrhoids) safely and effectively. It helps soothe inflammation, reduce swelling, relieve pain, and promote healing in the affected area. Suitable for both internal and external piles, these tablets provide holistic relief from discomfort and support faster recovery. Easy to consume and cost-effective, Himalaya Pilex is a trusted Ayurvedic solution for piles management.",
+      "price": 206,
+      "originalPrice": 206,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768935008209/1768935488786-0lt4ee.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768935008209/1768935488786-0lt4ee.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768935008209/1768935489106-rv43u.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768935008209/1768935489550-0ubfj9.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768935008209/1768935488981-p89vcf.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768935008209/1768935489405-egab1d.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 26,
+      "benefits": [
+        "Reduces inflammation and swelling",
+        "Promotes healing of affected area",
+        "Provides relief from pain and discomfort",
+        "Suitable for different types of piles"
+      ],
+      "ingredients": [
+        "Sensitive Plant (Lajjalu)",
+        "Zinc Calx (Yashad Bhasma)"
+      ],
+      "usage": [
+        "Take the tablets in the dosage and frequency prescribed by your doctor. Swallow whole with water after meals. Do not crush or chew."
+      ],
+      "directions": "Take tablets only as prescribed by your doctor\nConsume after meals\nSwallow whole with water\nDo not crush or chew\nContinue for the recommended duration",
+      "supports": [
+        "Piles Relief",
+        "Haemorrhoids Care",
+        "Anti-Inflammatory",
+        "Digestive Health",
+        "Herbal Treatment"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "424",
+      "name": "Zandu Dantveer Ayurvedic Toothpaste",
+      "brand": "Zandu",
+      "category": "Hair, Skin and Oral Care",
+      "categoryId": 7,
+      "shortDescription": "Ayurvedic toothpaste with 40 herbal ingredients for healthy teeth and gums.",
+      "description": "Zandu Dantveer Ayurvedic Toothpaste is a complete Ayurvedic oral care solution for strong teeth and healthy gums. Formulated with 40 powerful Ayurvedic ingredients and enriched with Irimedadi Taila, a traditional oil blend mentioned in ancient Ayurvedic texts, it helps fight nine common oral problems. Regular use helps prevent cavities, reduce plaque, relieve toothache, prevent tooth decay, and maintain overall oral hygiene while giving long-lasting freshness.",
+      "price": 132,
+      "originalPrice": 132,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768932458257/1768933299925-pr8p9e.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768932458257/1768933299925-pr8p9e.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768932458257/1768933298946-me6rm5.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768932458257/1768933300736-9os1bm.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768932458257/1768933302738-bu7iur.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768932458257/1768933302451-49tqt3.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 55,
+      "benefits": [
+        "Prevents dental cavities",
+        "Relieves toothache",
+        "Prevents tooth decay",
+        "Reduces plaque",
+        "Provides long-lasting freshness",
+        "Maintains overall oral health"
+      ],
+      "ingredients": [
+        "Irimedadi Oil",
+        "Lavang Tail",
+        "Babbul",
+        "Sunthi",
+        "Neem",
+        "Marich",
+        "Pippali",
+        "Tailaparna Oil",
+        "Fitkari"
+      ],
+      "usage": [
+        "Use a generous amount on your toothbrush. Brush gently in circular motions for at least 2 minutes, including teeth and tongue. Rinse mouth and toothbrush thoroughly after use."
+      ],
+      "directions": "Take sufficient toothpaste on toothbrush\nBrush gently in circular motions on outer teeth\nTilt brush to clean inner surfaces\nBrush for at least 2 minutes\nClean your tongue\nRinse mouth and toothbrush properly",
+      "supports": [
+        "Oral Care",
+        "Cavity Protection",
+        "Gum Health",
+        "Plaque Control",
+        "Fresh Breath",
+        "Ayurvedic Toothpaste"
+      ],
+      "expiryInfo": "2 years from the date of manufacturing",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "423",
+      "name": "Zandu Shilajit Cool Rush (60 Caps)",
+      "brand": "Zandu",
+      "category": "Gym and Energy",
+      "categoryId": 3,
+      "shortDescription": "Cooling Shilajit capsules to fight fatigue and support daily energy and stamina.",
+      "description": "Zandu Shilajit Cool Rush is formulated with natural coolants and Shuddha Shilajit to regulate internal heat, rejuvenate the body from daily fatigue, and support endurance, vitality, and all-day energy, making it suitable even in hot weather.",
+      "price": 561,
+      "originalPrice": 561,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768931688479/1768932153183-wvmoo9.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768931688479/1768932153183-wvmoo9.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768931688479/1768932153441-oj0df.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768931688479/1768932153068-sybcr.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768931688479/1768932152955-500it.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768931688479/1768932153720-qzfmuf.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 58,
+      "benefits": [
+        "Regulates internal heat",
+        "Fights all-day fatigue",
+        "Fights all-day fatigue",
+        "Helps maintain energy levels",
+        "Suitable for daily use in hot weather"
+      ],
+      "ingredients": [
+        "Shuddha Shilajit",
+        "Yasti",
+        "Satapatrika",
+        "Svetachandana",
+        "Kamala",
+        "Sukshmaila",
+        "Moti Pishti",
+        "Ushira Oil",
+        "Pudina Oil"
+      ],
+      "usage": [
+        "Take 1ΓÇô2 capsules twice daily or as directed by a physician."
+      ],
+      "directions": "Take 1 to 2 capsules\nConsume twice daily\nUse regularly for best results",
+      "supports": [
+        "Energy",
+        "Stamina",
+        "Fatigue Relief",
+        "Cooling Effect",
+        "Vitality"
+      ],
+      "expiryInfo": "2 years from the date of manufacture",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "421",
+      "name": "Zandu Anti-AGEs Action Dirghayuprash",
+      "brand": "Zandu",
+      "category": "Ayurvedic Immunity Boosters",
+      "categoryId": 5,
+      "shortDescription": "Ayurvedic health tonic that boosts immunity, energy, stamina and supports bone and joint strength.",
+      "description": "Zandu Anti-AGEs Action Dirghayuprash is a powerful Ayurvedic health tonic formulated to improve immunity, energy, strength, and stamina. Enriched with natural ingredients like Ashwagandha, Amalaki, and Saffron, it helps reduce stress, supports digestion, strengthens bones and joints with calcium, and promotes overall physical and mental health. Regular use provides three-way immunity action and helps maintain long-term wellness.",
+      "price": 232,
+      "originalPrice": 232,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768929313900/1768929934376-kyfhys.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768929313900/1768929934376-kyfhys.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768929313900/1768929934078-xgp5lk.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768929313900/1768929934145-xp06dn.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768929313900/1768929934492-ty0cs.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768929313900/1768929934820-gkpblo.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 55,
+      "benefits": [
+        "Reduces stress",
+        "Increases energy, strength and stamina",
+        "Strengthens bones and joints",
+        "Provides three-way immunity action",
+        "Promotes physical and mental health",
+        "Aids digestion"
+      ],
+      "ingredients": [
+        "Ashwagandha",
+        "Amalaki",
+        "Saffron",
+        "Gokshura",
+        "Moti"
+      ],
+      "usage": [
+        "Measure 1 to 2 teaspoons (approximately 12ΓÇô24 g) daily, preferably with milk. Consume in the morning for best results."
+      ],
+      "directions": "Measure 1ΓÇô2 teaspoons of Dirghayuprash\nTake it with milk\nConsume daily in the morning\nContinue regularly for best results",
+      "supports": [
+        "Immunity Booster",
+        "Energy Support",
+        "Bone & Joint Care",
+        "Stress Relief",
+        "Digestive Health",
+        "Stamina Booste"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "419",
+      "name": "Abhayasan Tablet",
+      "brand": "Zandu",
+      "category": "Gym and Energy",
+      "categoryId": 3,
+      "shortDescription": "Ayurvedic tablet for improving digestion and relieving constipation and acidity.",
+      "description": "Zandu Abhayasan Tablet is an Ayurvedic proprietary medicine specially made for digestive wellness. It helps correct hyperacidity, clear abdominal distension, relieve abdominal pain, and regulate proper bowel movement. This natural formulation supports healthy digestion and brings long-lasting relief from common stomach problems.",
+      "price": 181,
+      "originalPrice": 181,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768861156202/1768861628557-gdkrod.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768861156202/1768861628557-gdkrod.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 70,
+      "benefits": [
+        "Corrects hyperacidity",
+        "Clears abdominal distension",
+        "Relieves abdominal pain",
+        "Regulates proper bowel movement"
+      ],
+      "ingredients": [
+        "Triphala",
+        "Trikatu",
+        "Dhanyaka",
+        "Lavang"
+      ],
+      "usage": [
+        "Take 2 tablets twice daily or as directed by your physician."
+      ],
+      "directions": "Take two tablets after meals\nConsume twice daily\nFollow doctorΓÇÖs advice if needed",
+      "supports": [
+        "Digestion Support",
+        "Constipation Relief",
+        "Acidity Control",
+        "Stomach Care",
+        "Bowel Regulation"
+      ],
+      "expiryInfo": "",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "357",
+      "name": "Digestive Care Juice 1000 ml | Acidity Care Juice 1000 ml",
+      "brand": "Dabur",
+      "category": "Ayurvedic Immunity Boosters",
+      "categoryId": 5,
+      "shortDescription": "Juice ",
+      "description": "Twice in a day: Take 30ml juice with 30ml warm water in the morning empty stomach & in the evening 1 hour post-dinner.",
+      "price": 900,
+      "originalPrice": 1080,
+      "discount": 0,
+      "rating": 4.25,
+      "reviews": 4,
+      "image": "https://images.unsplash.com/photo-1631549916768-4119b2e5f926?q=80&w=800",
+      "images": [
+        "https://images.unsplash.com/photo-1631549916768-4119b2e5f926?q=80&w=800",
+        "https://images.unsplash.com/photo-1505751172876-fa1923c5c528?q=80&w=2070&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1542838132-92c53300491e?q=80&w=1974&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?q=80&w=2070&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?q=80&w=2030&auto=format&fit=crop"
+      ],
+      "inStock": false,
+      "stockQuantity": 0,
+      "benefits": [
+        "Supports immune system health",
+        "Promotes overall wellness",
+        "Natural ingredients for better absorption",
+        "Clinically tested formula"
+      ],
+      "ingredients": [
+        "Ashwagandha Root Extract",
+        "Turmeric",
+        "Ginger",
+        "Black Pepper Extract"
+      ],
+      "usage": [
+        "Take 1 tablet twice a day",
+        "Best consumed with warm milk",
+        "Use consistency for 3 months"
+      ],
+      "directions": "Take 1-2 tablets daily with warm water or milk, preferably after meals. Consult your physician for dosage appropriate for your specific condition.",
+      "supports": [
+        "Skin Care",
+        "Stress Relief",
+        "Immunity"
+      ],
+      "expiryInfo": null,
+      "subCategory": "Stress Relief",
+      "subCategoryId": 2,
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "420",
+      "name": "Zandu Lalima Syrup",
+      "brand": "Zandu",
+      "category": "Hair, Skin and Oral Care",
+      "categoryId": 7,
+      "shortDescription": "Ayurvedic blood purifier syrup for clear, glowing and acne-free skin.",
+      "description": "Zandu Lalima Syrup is a scientifically proven Ayurvedic blood purifier that works internally to cleanse toxins from the bloodstream. It helps treat acne, pimples, and dull skin by purifying the blood and supporting liver function. Regular use promotes clear and radiant skin, improves hemoglobin levels, boosts immunity, and enhances overall skin health. Recommended by Ayurvedic experts, it also has a pleasant taste for easy daily use.",
+      "price": 194,
+      "originalPrice": 194,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768861990536/1768862566398-gnu6e5.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768861990536/1768862566398-gnu6e5.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768861990536/1768862565827-j52ymt.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768861990536/1768862565697-m37cqb.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 225,
+      "benefits": [
+        "Purifies blood",
+        "Enhances hemoglobin levels",
+        "Supports liver function",
+        "Promotes healthy and glowing skin",
+        "Boosts immunity"
+      ],
+      "ingredients": [
+        "Kesar",
+        "Haridra",
+        "Honey",
+        "Triphala",
+        "Anantamool",
+        "Katuki",
+        "Manjistha",
+        "Guduchi"
+      ],
+      "usage": [
+        "Shake the bottle well before use. Consume in the morning on an empty stomach or as directed by your physician. Follow the dosage mentioned on the package."
+      ],
+      "directions": "Shake well before use\nTake the recommended dose daily\nConsume on empty stomach in the morning\nStore in a cool and dry place\nUse regularly for best results",
+      "supports": [
+        "Blood Purifier",
+        "Acne Control",
+        "Skin Glow",
+        "Liver Support",
+        "Immunity Booster"
+      ],
+      "expiryInfo": "2 years from the date of manufacturing",
+      "subCategory": "Hair Care",
+      "subCategoryId": 4,
+      "specifications": null,
+      "promoted": false,
+      "active": true
+    },
+    {
+      "id": "418",
+      "name": "Zandu Vitality Booster Caps",
+      "brand": "Zandu",
+      "category": "Gym and Energy",
+      "categoryId": 3,
+      "shortDescription": "Daily energizer capsule that helps reduce stress and boost stamina and energy.",
+      "description": "Zandu Vitality Booster Capsules contain the power of Shilajit and Ashwagandha to improve testosterone levels, reduce weakness, relieve stress and anxiety, and boost stamina and energy. Regular use may help reduce fatigue, depression, insomnia, low immunity, and lack of vitality. Developed by Ayurvedic experts at ZAARC, these are 100% vegetarian capsules without added flavours or colours.",
+      "price": 1125,
+      "originalPrice": 1125,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768860479482/1768860888834-tvat2c.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768860479482/1768860888834-tvat2c.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768860479482/1768860888912-yrta98.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768860479482/1768860888963-gl1t1f.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 1523,
+      "benefits": [
+        "Helps increase energy and vitality",
+        "Improves sexual health",
+        "Reduces stress and improves mood"
+      ],
+      "ingredients": [
+        "Kavanch",
+        "Gokshura",
+        "Ashwagandha",
+        "Shuddha Shilajit",
+        "Lavang",
+        "Kesar (Saffron)",
+        "Nutmeg"
+      ],
+      "usage": [
+        "Take 1 capsule twice a day, preferably with milk, or as directed by a physician. Use regularly for 60 days for best results."
+      ],
+      "directions": "Take one capsule with milk in the morning\nTake one capsule with milk in the evening\nContinue regularly for 60 days",
+      "supports": [
+        "Energy Boos",
+        "Stress Relief",
+        "Stamina Support",
+        "Sexual Wellness",
+        "Mood Enhancement"
+      ],
+      "expiryInfo": "2 years from the date of manufacturing",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "417",
+      "name": "Abhyadi Modak",
+      "brand": "SBS Herbal Private Limited",
+      "category": " Herbal Supplements ",
+      "categoryId": 4,
+      "shortDescription": "Ayurvedic tablet to support digestion and provide relief from constipation and piles.",
+      "description": "Abhyadi Modak is an Ayurvedic formulation made from multiple herbs that support digestive health and help relieve constipation, acidity, gas, and piles. It also aids in overall well-being and supports joint and gut health by cleansing the system naturally.",
+      "price": 1399,
+      "originalPrice": 1399,
+      "discount": 0,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768859380235/1768860001622-y4eyx.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768859380235/1768860001622-y4eyx.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768859380235/1768859995208-5k48w8.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768859380235/1768859995246-nbmul2.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 110,
+      "benefits": [
+        "Relieves constipation",
+        "Supports digestive health",
+        "Helps in piles management",
+        "Promotes overall well-being"
+      ],
+      "ingredients": [
+        "Pippali",
+        "Twak",
+        "Pippali (Mool)",
+        "Tejpatara",
+        "Musta",
+        "Dantimool",
+        "Trivrutta",
+        "Sharkara",
+        "Madhu"
+      ],
+      "usage": [
+        "Take as directed by an Ayurvedic physician."
+      ],
+      "directions": "Consume as prescribed\nUse regularly for best results",
+      "supports": [
+        "Digestion",
+        "Constipation Relief",
+        "Piles Care",
+        "Gut Health"
+      ],
+      "expiryInfo": "2 years from manufacturing date",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "415",
+      "name": "Zandu Shilajit Gold Plus Capsules",
+      "brand": "Zandu",
+      "category": "Gym and Energy",
+      "categoryId": 3,
+      "shortDescription": "Ayurvedic capsule for fitness enthusiasts to support strength, stamina, and endurance.",
+      "description": "Zandu Shilajit Gold Plus is designed for fitness enthusiasts and gym-goers to enhance performance, strength, stamina, and endurance using Himalayan Shilajit, Gold Bhasma, Safed Musli, and Gokshura.",
+      "price": 269.1,
+      "originalPrice": 299,
+      "discount": 10,
+      "rating": 0,
+      "reviews": 0,
+      "image": "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768856889306/1768857222994-03abj5.jpg",
+      "images": [
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768856889306/1768857222994-03abj5.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768856889306/1768857222540-kte0wl.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768856889306/1768857222203-3nf38g.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768856889306/1768857224159-sj6pqp.jpg",
+        "https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/new_1768856889306/1768857224439-8zgt9.jpg"
+      ],
+      "inStock": true,
+      "stockQuantity": 1011,
+      "benefits": [
+        "Supports muscle strength and growth",
+        "Boosts testosterone and male vitality",
+        "Increases energy and endurance",
+        "Improves immunity and heart health",
+        "Enhances recovery and performance"
+      ],
+      "ingredients": [
+        "Shilajit",
+        "Ashwagandha",
+        "Swarna Bhasma",
+        "Safed Musli",
+        "Satavari",
+        "Jatiphala",
+        "Lavang",
+        "Atmagupta"
+      ],
+      "usage": [
+        "Consume 1 capsule twice daily with warm milk or with m"
+      ],
+      "directions": "Take 1 capsule with warm milk\nConsume twice daily",
+      "supports": [
+        "Energy",
+        "Stamina",
+        "Muscle Strength",
+        "Endurance",
+        "Fitness"
+      ],
+      "expiryInfo": "2 years from manufacturing date",
+      "subCategory": "",
+      "subCategoryId": "",
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    },
+    {
+      "id": "396",
+      "name": "Kidney Relive Juice",
+      "brand": "Dabur",
+      "category": "Ayurvedic Immunity Boosters",
+      "categoryId": 5,
+      "shortDescription": "Juice ",
+      "description": "Shake well before use, \\nMix 30ml of juice with 30ml of warm water, Take an empty stomach in the morning and 30 mins post-dinner",
+      "price": 381.6,
+      "originalPrice": 381.6,
+      "discount": 0,
+      "rating": 4.25,
+      "reviews": 4,
+      "image": "https://images.unsplash.com/photo-1631549916768-4119b2e5f926?q=80&w=800",
+      "images": [
+        "https://images.unsplash.com/photo-1631549916768-4119b2e5f926?q=80&w=800",
+        "https://images.unsplash.com/photo-1505751172876-fa1923c5c528?q=80&w=2070&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1542838132-92c53300491e?q=80&w=1974&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?q=80&w=2070&auto=format&fit=crop",
+        "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?q=80&w=2030&auto=format&fit=crop"
+      ],
+      "inStock": false,
+      "stockQuantity": 28,
+      "benefits": [
+        "Supports immune system health",
+        "Promotes overall wellness",
+        "Natural ingredients for better absorption",
+        "Clinically tested formula"
+      ],
+      "ingredients": [
+        "Ashwagandha Root Extract",
+        "Turmeric",
+        "Ginger",
+        "Black Pepper Extract"
+      ],
+      "usage": [
+        "Take 1 tablet twice a day",
+        "Best consumed with warm milk",
+        "Use consistency for 3 months"
+      ],
+      "directions": "Take 1-2 tablets daily with warm water or milk, preferably after meals. Consult your physician for dosage appropriate for your specific condition.",
+      "supports": [
+        "Digestion",
+        "Stress Relief"
+      ],
+      "expiryInfo": "",
+      "subCategory": "Stress Relief",
+      "subCategoryId": 2,
+      "specifications": null,
+      "promoted": true,
+      "active": true
+    }
+  ]
+}
+Product: Zandu Ayurvedic Hair Growth Mask (200 g), ID: 445, Initial Stock: 2
+
+Adding to cart...
+[DEBUG] POST /api/cart/add
+[DEBUG] GET /api/cart
+Cart items: 1
+
+Placing order...
+[DEBUG] POST /api/orders
+Order placed! ID: a8b33203-cba4-4a55-9490-7c58f04d1818
+
+Verifying stock decrement...
+[DEBUG] GET /api/products/445
+Initial Stock: 2, Stock After Order: 48
+Γ¥î Stock decrement failed!
+[DEBUG] GET /api/cart
+Cart items count after order: 0
+Γ£à Cart cleared after order.
+
+Testing stock restoration on cancellation...
+[DEBUG] PATCH /api/orders/a8b33203-cba4-4a55-9490-7c58f04d1818/status
+[DEBUG] Restoring stock for order a8b33203-cba4-4a55-9490-7c58f04d1818. Items count: 1
+[DEBUG] Item 445: quantity 2
+[DEBUG] Updated product 445. New stock_quantity: 2, quantity: 50
+Order cancelled.
+[DEBUG] GET /api/products/445
+Stock after cancellation: 2
+Γ£à Stock restored correctly.
