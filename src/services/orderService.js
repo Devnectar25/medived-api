@@ -157,7 +157,7 @@ exports.updateOrderStatus = async (orderId, status) => {
                      RETURNING stock_quantity, quantity`,
                     [item.product_id, item.quantity]
                 );
-                console.log(`[DEBUG] Updated product ${item.product_id}. New stock_quantity: ${updateRes.rows[0]?.stock_quantity}, quantity: ${updateRes.rows[0]?.quantity}`);
+                // console.log(`[DEBUG] Updated product ${item.product_id}. New stock_quantity: ${updateRes.rows[0]?.stock_quantity}, quantity: ${updateRes.rows[0]?.quantity}`);
             }
         }
 

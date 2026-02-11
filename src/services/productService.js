@@ -281,7 +281,7 @@ exports.deleteProduct = async (id) => {
         }
 
         if (folderToDelete) {
-            console.log(`Deleting product folder: ${folderToDelete}`);
+            // console.log(`Deleting product folder: ${folderToDelete}`);
             await storageService.deleteFolder(folderToDelete).catch(e => console.error(`Failed to delete folder ${folderToDelete}:`, e.message));
         }
     }
