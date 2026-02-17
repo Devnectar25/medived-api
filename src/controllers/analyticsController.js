@@ -146,10 +146,31 @@ async function getAnalyticsDrilldown(req, res) {
   }
 }
 
+/**
+ * GET /api/admin/analytics/dashboard-stats
+ * Returns counts for Brands, Categories, Products, Tips, Orders
+ */
+async function getDashboardStats(req, res) {
+  try {
+    const stats = await analyticsService.getDashboardEntityCounts();
+    res.status(200).json({
+      success: true,
+      data: stats,
+    });
+  } catch (error) {
+    console.error("Dashboard Stats Controller Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch dashboard stats",
+    });
+  }
+}
+
 module.exports = {
   getAdminAnalyticsSummary,
   getTopActiveUsers,
   getTopProducts,
   getTopCategories,
-  getAnalyticsDrilldown
+  getAnalyticsDrilldown,
+  getDashboardStats
 };
