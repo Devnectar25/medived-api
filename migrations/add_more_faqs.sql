@@ -1,0 +1,8 @@
+INSERT INTO faqs (question, answer, category, display_order) VALUES
+('What products and services does Homved offer?', 'Homved specializes in a wide range of authentic Ayurvedic, Homeopathic, and wellness products. We also provide health tips and personalized recommendations to support your holistic well-being.', 'General', 7),
+('How can I contact customer support?', 'You can reach our customer support team via the "Contact Us" page, by emailing info@homved.com, or by calling +91 123 456 7890 during business hours (Mon-Sat, 9am-6pm).', 'General', 8),
+('Do you offer consultation with doctors?', 'Currently, we focus on providing high-quality wellness products. However, we plan to introduce consultation services with certified Ayurvedic and Homeopathic practitioners in the future.', 'Services', 9),
+('Are the products safe for children?', 'Most of our products are safe for general use, but we strongly recommend consulting a healthcare professional before administering any product to children, pregnant women, or individuals with specific medical conditions.', 'Products', 10),
+('How do I know if a product is right for me?', 'We provide detailed product descriptions, benefits, and usage instructions. You can also browse our "Health Tips" section for general guidance. For specific health concerns, please consult a doctor.', 'Products', 11),
+('Can I cancel my order?', 'Yes, you can cancel your order before it has been shipped. Please visit your "My Orders" section in your profile to request a cancellation.', 'Orders', 12),
+('How long does delivery take?', 'Standard delivery typically takes 3-7 business days depending on your location. You can track your shipment using the tracking number provided in your order confirmation.', 'Shipping', 13);
