@@ -166,11 +166,33 @@ async function getDashboardStats(req, res) {
   }
 }
 
+/**
+ * POST /api/analytics/track
+ * Track an analytics event
+ */
+async function trackEvent(req, res) {
+  try {
+    const { eventName, userId, sessionId, metadata } = req.body;
+
+    if (!eventName) {
+      return res.status(400).json({ success: false, message: "Event name is required" });
+    }
+
+    await analyticsService.trackEvent(eventName, userId, sessionId, metadata);
+
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error("Track Event Controller Error:", error);
+    res.status(500).json({ success: false, message: "Failed to track event" });
+  }
+}
+
 module.exports = {
   getAdminAnalyticsSummary,
   getTopActiveUsers,
   getTopProducts,
   getTopCategories,
   getAnalyticsDrilldown,
-  getDashboardStats
+  getDashboardStats,
+  trackEvent
 };

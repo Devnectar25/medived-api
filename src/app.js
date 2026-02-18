@@ -33,6 +33,7 @@ app.use('/api/orders', require('./routes/orderRoutes'));
 app.use("/api/admin/analytics", adminAnalyticsRoutes);
 app.use('/api/contact', require('./routes/contactRoutes'));
 app.use('/api/faqs', require('./routes/faqRoutes'));
+app.use('/api/analytics', require('./routes/publicAnalyticsRoutes'));
 
 app.get('/', (req, res) => {
     res.send("HomeVed API is running....");
