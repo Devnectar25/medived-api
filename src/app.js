@@ -31,7 +31,32 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use(express.json());
+// Debug: Raw echo route to test request body stream before parsing
+app.post('/api/echo', (req, res) => {
+    console.log("Echo route hit");
+    req.pipe(res);
+});
+
+console.log("Setting up body parser...");
+app.use((req, res, next) => {
+    console.log(`[Middleware] Processing ${req.method} ${req.url}`);
+
+    // Wrap express.json in try-catch block for logging
+    try {
+        express.json()(req, res, (err) => {
+            if (err) {
+                console.error("JSON Parse Error inside middleware:", err);
+                return next(err);
+            }
+            console.log("JSON Body Parsed successfully");
+            next();
+        });
+    } catch (e) {
+        console.error("CRITICAL: express.json() crashed synchronously:", e);
+        next(e);
+    }
+});
+
 
 // ⭐ IMPORTANT — Attach API route
 app.use('/api/products', productRoutes);
