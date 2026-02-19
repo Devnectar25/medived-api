@@ -31,13 +31,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// Debug: Raw echo route to test request body stream before parsing
-app.post('/api/echo', (req, res) => {
-    console.log("Echo route hit");
-    req.pipe(res);
-});
-
-console.log("Setting up body parser...");
 // Manual JSON body parser to bypass express.json() crash on Vercel
 app.use((req, res, next) => {
     if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'PATCH') {
@@ -59,7 +52,6 @@ app.use((req, res, next) => {
         try {
             if (data && data.trim()) {
                 req.body = JSON.parse(data);
-                console.log("Manual JSON Body Parsed successfully");
             } else {
                 req.body = {};
             }
@@ -94,7 +86,8 @@ app.use("/api/admin/analytics", adminAnalyticsRoutes);
 app.use('/api/contact', require('./routes/contactRoutes'));
 app.use('/api/faqs', require('./routes/faqRoutes'));
 app.use('/api/analytics', require('./routes/publicAnalyticsRoutes'));
-app.use('/api/debug', require('./routes/debugRoutes')); // Temporary debug route
+// app.use('/api/debug', require('./routes/debugRoutes')); // Temporary debug route (Disabled for prod)
+
 
 
 app.get('/', (req, res) => {

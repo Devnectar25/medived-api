@@ -6,12 +6,8 @@ const { protect } = require('../middlewares/authMiddleware');
 router.post('/register', authController.register);
 router.post('/login', authController.login);
 router.post('/verify-otp', authController.verifyOtp);
+router.post('/admin/login', authController.adminLogin);
 
-// MOCK HANDLER TO DEBUG CONTROLLER IMPORT ISSUE
-router.post('/admin/login', (req, res) => {
-    res.json({ success: true, message: "Inline handler works" });
-});
-// router.post('/admin/login', authController.adminLogin);
 
 
 // Debug: decode current token and return payload
