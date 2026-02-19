@@ -46,9 +46,13 @@ exports.verifyOtp = async (req, res) => {
 exports.adminLogin = async (req, res) => {
     try {
         const { username, password } = req.body;
+        console.log(`[adminLogin] Attempt for username: ${username}`);
         const result = await authService.loginAdmin(username, password);
+        console.log(`[adminLogin] Success for username: ${username}`);
         res.json({ success: true, ...result });
     } catch (error) {
+        console.error(`[adminLogin] FAILED: ${error.message}`, error.stack);
         res.status(401).json({ success: false, message: error.message });
     }
 };
+
