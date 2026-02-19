@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const session = require('express-session');
+const passport = require('./config/passport');
 
 const productRoutes = require('./routes/productRoutes');
 const brandRoutes = require('./routes/brandRoutes');
@@ -68,6 +70,29 @@ app.use((req, res, next) => {
     });
 });
 
+app.use(cors({
+    origin: ['http://localhost:5173', 'http://localhost:8080'],
+    credentials: true
+}));
+app.use(express.json());
+
+// Session middleware for OAuth (required for passport)
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'your-secret-key-change-this',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: process.env.NODE_ENV === 'production', // true in production with HTTPS
+        httpOnly: true,
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    }
+}));
+
+// Initialize Passport and restore authentication state from session
+app.use(passport.initialize());
+app.use(passport.session());
+
+console.log('✅ Passport middleware initialized');
 
 // ⭐ IMPORTANT — Attach API route
 app.use('/api/products', productRoutes);
