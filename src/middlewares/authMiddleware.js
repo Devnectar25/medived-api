@@ -23,6 +23,7 @@ exports.protect = (req, res, next) => {
 
 exports.authorize = (...roles) => {
     return (req, res, next) => {
+        console.log(`[Authorize] Required: ${roles.join('/')}, Got: ${req.user?.role}, ID: ${req.user?.id}`);
         if (!roles.includes(req.user.role)) {
             return res.status(403).json({
                 success: false,
