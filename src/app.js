@@ -14,13 +14,22 @@ const adminAnalyticsRoutes = require("./routes/adminAnalyticsRoutes");
 
 const app = express();
 
-app.use(cors({
-    origin: process.env.CORS_ORIGIN || '*',
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: !!process.env.CORS_ORIGIN // only true when a specific origin is set
-}));
+// Manual CORS middleware — cors package is unreliable on Vercel serverless
+// for Authorization headers. This is explicit and guaranteed to work.
+app.use((req, res, next) => {
+    const origin = req.headers.origin || '*';
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Max-Age', '86400');
 
+    // Handle preflight OPTIONS request immediately
+    if (req.method === 'OPTIONS') {
+        return res.status(204).end();
+    }
+    next();
+});
 
 app.use(express.json());
 
