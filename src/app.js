@@ -14,7 +14,20 @@ const adminAnalyticsRoutes = require("./routes/adminAnalyticsRoutes");
 
 const app = express();
 
-app.use(cors());
+app.use(cors({
+    origin: process.env.CORS_ORIGIN || '*',
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: !!process.env.CORS_ORIGIN // only true when a specific origin is set
+}));
+
+// Handle preflight requests for all routes
+app.options('*', cors({
+    origin: process.env.CORS_ORIGIN || '*',
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: !!process.env.CORS_ORIGIN
+}));
 app.use(express.json());
 
 // ⭐ IMPORTANT — Attach API route

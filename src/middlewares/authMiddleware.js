@@ -8,6 +8,7 @@ exports.protect = (req, res, next) => {
     }
 
     if (!token) {
+        console.warn(`[Auth] No token on ${req.method} ${req.path}. Headers: ${Object.keys(req.headers).join(', ')}`);
         return res.status(401).json({ success: false, message: 'Not authorized to access this route' });
     }
 
