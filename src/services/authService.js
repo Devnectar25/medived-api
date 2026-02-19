@@ -176,27 +176,45 @@ exports.verifyOtp = async (email, otp) => {
 // --- ADMIN AUTH ---
 
 exports.loginAdmin = async (username, password) => {
+    console.log(`[authService] loginAdmin called for: ${username}`);
+
+    // 1. Query DB
     const result = await pool.query("SELECT * FROM public.admins WHERE userid = $1", [username]);
     const adminRow = result.rows[0];
 
+    console.log(`[authService] DB lookup result: ${result.rowCount > 0 ? 'found' : 'not found'}`);
+
     if (!adminRow || !(await bcrypt.compare(password, adminRow.password))) {
+        console.log(`[authService] Invalid credentials check`);
         if (adminRow && adminRow.password === password) {
-            // allow plain
+            console.log(`[authService] Plain password matched (fallback)`);
         } else {
+            console.log(`[authService] Credentials rejected`);
             throw new Error("Invalid username or password");
         }
     }
 
-    const token = generateToken(adminRow.adminid, 'admin');
+    console.log(`[authService] Credentials valid. Generating token...`);
 
-    // Map to frontend structure
-    const admin = {
-        id: adminRow.adminid.toString(),
-        username: adminRow.userid,
-        role: adminRow.userid === 'Admin' ? 'super_admin' : 'sub_admin',
-        permissions: adminRow.accesstopage || [],
-        createdate: adminRow.createdate
-    };
+    try {
+        const token = generateToken(adminRow.adminid, 'admin');
+        console.log(`[authService] Token generated.`);
 
-    return { admin, token };
+        // Map to frontend structure
+        const admin = {
+            id: adminRow.adminid.toString(),
+            username: adminRow.userid,
+            role: adminRow.userid === 'Admin' ? 'super_admin' : 'sub_admin',
+            permissions: adminRow.accesstopage || [], // Ensure array
+            createdate: adminRow.createdate
+        };
+
+        console.log(`[authService] Admin object prepared: ${JSON.stringify(admin)}`);
+        return { admin, token };
+    } catch (e) {
+        console.error(`[authService] Token generation failed: ${e.message}`, e.stack);
+        throw new Error(`Token generation failed: ${e.message}`);
+    }
 };
+
+
