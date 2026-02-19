@@ -62,8 +62,12 @@ app.use((err, req, res, next) => {
     console.error('SERVER ERROR:', err.stack);
     res.status(500).json({
         success: false,
-        error: "Internal Server Error"
+        error: "Internal Server Error",
+        debug_message: err.message,
+        debug_stack: err.stack // Force show stack trace for debugging
     });
 });
 
+
 module.exports = app;
+
