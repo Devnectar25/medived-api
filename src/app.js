@@ -38,23 +38,42 @@ app.post('/api/echo', (req, res) => {
 });
 
 console.log("Setting up body parser...");
+// Manual JSON body parser to bypass express.json() crash on Vercel
 app.use((req, res, next) => {
-    console.log(`[Middleware] Processing ${req.method} ${req.url}`);
-
-    // Wrap express.json in try-catch block for logging
-    try {
-        express.json()(req, res, (err) => {
-            if (err) {
-                console.error("JSON Parse Error inside middleware:", err);
-                return next(err);
-            }
-            console.log("JSON Body Parsed successfully");
-            next();
-        });
-    } catch (e) {
-        console.error("CRITICAL: express.json() crashed synchronously:", e);
-        next(e);
+    if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'PATCH') {
+        return next();
     }
+
+    // Only parse if content-type is json
+    const contentType = req.headers['content-type'];
+    if (!contentType || !contentType.includes('application/json')) {
+        return next();
+    }
+
+    let data = '';
+    req.on('data', chunk => {
+        data += chunk;
+    });
+
+    req.on('end', () => {
+        try {
+            if (data && data.trim()) {
+                req.body = JSON.parse(data);
+                console.log("Manual JSON Body Parsed successfully");
+            } else {
+                req.body = {};
+            }
+            next();
+        } catch (e) {
+            console.error("Manual JSON Parse Error:", e);
+            res.status(400).json({ success: false, error: "Invalid JSON body" });
+        }
+    });
+
+    req.on('error', (err) => {
+        console.error("Request stream error:", err);
+        next(err);
+    });
 });
 
 
