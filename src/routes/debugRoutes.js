@@ -14,49 +14,32 @@ router.get('/tables', async (req, res) => {
 
 router.post('/setup-admin', async (req, res) => {
     try {
-        // Create admins table if not exists with correct schema
-        // Based on authService.js fields: adminid, userid, password, accesstopage, createdate, active
+        // Force update existing Admin user's password and permissions
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash('Admin', salt);
 
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS public.admins (
-                adminid SERIAL PRIMARY KEY,
-                userid VARCHAR(255) UNIQUE NOT NULL,
-                password TEXT NOT NULL,
-                accesstopage TEXT[], 
-                createdate TIMESTAMP DEFAULT NOW(),
-                active BOOLEAN DEFAULT TRUE
-            );
-        `);
+        // This query updates assuming the user exists (as confirmed by check)
+        const updateResult = await pool.query(
+            "UPDATE public.admins SET password = $1, accesstopage = $2, active = $3 WHERE userid = 'Admin' RETURNING adminid, userid, accesstopage, createdate, active",
+            [hashedPassword, ['dashboard', 'orders', 'products', 'users', 'categories', 'brands', 'health-tips', 'subcategories', 'offers', 'faqs', 'contact', 'reviews', 'addresses', 'wishlist', 'cart', 'analytics'], true]
+        );
 
-        // Check if admin exist
-        const check = await pool.query("SELECT * FROM public.admins WHERE userid = 'Admin'");
-
-        if (check.rows.length === 0) {
-            // Create default admin: Admin/Admin (hashed)
-            const salt = await bcrypt.genSalt(10);
-            const hashedPassword = await bcrypt.hash('Admin', salt);
-
-            // Assuming full access for now
-            const allPages = ['dashboard', 'orders', 'products', 'users', 'categories', 'brands', 'health-tips', 'subcategories', 'offers', 'faqs', 'contact', 'reviews', 'addresses', 'wishlist', 'cart', 'analytics'];
-
+        if (updateResult.rowCount === 0) {
+            // If user doesn't exist for some reason, insert
             await pool.query(
                 "INSERT INTO public.admins (userid, password, accesstopage, createdate, active) VALUES ($1, $2, $3, NOW(), $4)",
-                ['Admin', hashedPassword, allPages, true]
+                ['Admin', hashedPassword, ['dashboard', 'orders', 'products', 'users', 'categories', 'brands', 'health-tips', 'subcategories', 'offers', 'faqs', 'contact', 'reviews', 'addresses', 'wishlist', 'cart', 'analytics'], true]
             );
-
-            res.json({ success: true, message: "Created admins table and inserted default Admin user." });
+            res.json({ success: true, message: "Admin user created successfully." });
         } else {
-            // Update existing Admin password to match hash just in case of mismatch
-            // const salt = await bcrypt.genSalt(10);
-            // const hashedPassword = await bcrypt.hash('Admin', salt);
-            // await pool.query("UPDATE public.admins SET password = $1 WHERE userid = 'Admin'", [hashedPassword]);
-
-            res.json({ success: true, message: "Admin table exists and Admin user already present." });
+            res.json({ success: true, message: "Admin user updated successfully.", admin: updateResult.rows[0] });
         }
+
     } catch (error) {
         console.error("Setup Admin Error:", error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
+
 
 module.exports = router;
