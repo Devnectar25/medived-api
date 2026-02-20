@@ -87,7 +87,7 @@ app.use('/api/contact', require('./routes/contactRoutes'));
 app.use('/api/faqs', require('./routes/faqRoutes'));
 app.use('/api/analytics', require('./routes/publicAnalyticsRoutes'));
 // app.use('/api/debug', require('./routes/debugRoutes')); // Temporary debug route (Disabled for prod)
-
+app.use('/api/chatbot', require('./routes/chatbotRoutes'));
 
 
 app.get('/', (req, res) => {
