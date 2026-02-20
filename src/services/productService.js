@@ -299,3 +299,119 @@ exports.toggleProductStatus = async (id) => {
     `, [id]);
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
 };
+
+/**
+ * Simple chatbot product search (no NLP)
+ */
+exports.simpleChatbotSearch = async (query) => {
+    if (!query) return [];
+
+    const searchPattern = `%${query.trim()}%`;
+    const sql = `
+        SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
+        FROM products p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand = b.brand_id
+        LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
+        WHERE p.active = true AND (
+            p.productname ILIKE $1 OR 
+            p.description ILIKE $1 OR
+            c.name ILIKE $1 OR
+            b.name ILIKE $1
+        )
+        ORDER BY p.productname ASC
+        LIMIT 20
+    `;
+
+    const result = await pool.query(sql, [searchPattern]);
+    return result.rows.map(mapProduct);
+};
+
+exports.chatbotSearchProducts = async (query) => {
+    return this.simpleChatbotSearch(query);
+};
+
+/**
+ * Chatbot search for products under a certain price
+ */
+exports.chatbotSearchByPrice = async (maxPrice) => {
+    const sql = `
+        SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
+        FROM products p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand = b.brand_id
+        LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
+        WHERE p.active = true AND p.price <= $1
+        ORDER BY p.price DESC
+        LIMIT 20
+    `;
+
+    const result = await pool.query(sql, [maxPrice]);
+    return result.rows.map(mapProduct);
+};
+
+/**
+ * Chatbot search for products above a certain price
+ */
+exports.chatbotSearchByPriceAbove = async (minPrice) => {
+    const sql = `
+        SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
+        FROM products p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand = b.brand_id
+        LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
+        WHERE p.active = true AND p.price >= $1
+        ORDER BY p.price ASC
+        LIMIT 20
+    `;
+
+    const result = await pool.query(sql, [minPrice]);
+    return result.rows.map(mapProduct);
+};
+
+/**
+ * Chatbot: get all available products sorted by popularity.
+ * Used when user says "show me products" / "list all products" with no specific keyword.
+ */
+exports.chatbotGetProducts = async (limit = 10) => {
+    const sql = `
+        SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
+        FROM products p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand = b.brand_id
+        LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
+        WHERE p.active = true
+        ORDER BY p.promoted DESC, p.rating DESC NULLS LAST, p.updated_at DESC
+        LIMIT $1
+    `;
+    const result = await pool.query(sql, [limit]);
+    return result.rows.map(mapProduct);
+};
+
+/**
+ * Chatbot: search products by category name.
+ * Used when user says "show me ayurvedic products" / "list herbal items".
+ */
+exports.chatbotSearchByCategory = async (categoryName, limit = 10) => {
+    const sql = `
+        SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
+        FROM products p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand = b.brand_id
+        LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
+        WHERE p.active = true
+          AND (
+              c.name ILIKE $1
+              OR p.productname ILIKE $1
+              OR p.description ILIKE $1
+              OR p.shortdescription ILIKE $1
+              OR b.name ILIKE $1
+              OR sc.name ILIKE $1
+          )
+        ORDER BY p.promoted DESC, p.rating DESC NULLS LAST
+        LIMIT $2
+    `;
+    const result = await pool.query(sql, [`%${categoryName}%`, limit]);
+    return result.rows.map(mapProduct);
+};
+

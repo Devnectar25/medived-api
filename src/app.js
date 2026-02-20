@@ -28,6 +28,7 @@ app.use('/api/addresses', require('./routes/addressRoutes'));
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/cart', require('./routes/cartRoutes'));
 app.use('/api/orders', require('./routes/orderRoutes'));
+app.use('/api/chatbot', require('./routes/chatbotRoutes'));
 
 app.get('/', (req, res) => {
     res.send("HomeVed API is running....");

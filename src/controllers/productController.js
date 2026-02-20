@@ -188,3 +188,17 @@ exports.toggleProductStatus = async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 };
+
+exports.searchProducts = async (req, res) => {
+    try {
+        const { q } = req.query;
+        if (!q) {
+            return res.json({ success: true, data: [] });
+        }
+        const data = await productService.nlpSearchProducts(q);
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error("Error in searchProducts:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
