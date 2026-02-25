@@ -414,4 +414,3 @@ exports.chatbotSearchByCategory = async (categoryName, limit = 10) => {
     const result = await pool.query(sql, [`%${categoryName}%`, limit]);
     return result.rows.map(mapProduct);
 };
-

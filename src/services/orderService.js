@@ -6,18 +6,18 @@ exports.createOrder = async (orderData) => {
         await client.query('BEGIN');
 
         const {
-            userId, orderNumber, addressId, paymentMethod, paymentStatus,
+            userId, orderNumber, addressId, paymentMethod, paymentStatus, paymentType,
             subtotal, shipping, total, items, trackingNumber, estimatedDelivery
         } = orderData;
 
         // 1. Create Order
         const orderResult = await client.query(
             `INSERT INTO orders (
-                user_id, order_number, address_id, payment_method, payment_status,
+                user_id, order_number, address_id, payment_method, payment_status, payment_type,
                 subtotal, shipping, total, status, tracking_number, estimated_delivery, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Processing', $9, $10, NOW(), NOW())
+            ) VALUES ($1, $2, $3, $4, $5, $11, $6, $7, $8, 'Pending', $9, $10, NOW(), NOW())
             RETURNING *`,
-            [userId, orderNumber, addressId, paymentMethod, paymentStatus || 'Pending', subtotal, shipping, total, trackingNumber, estimatedDelivery]
+            [userId, orderNumber, addressId, paymentMethod, paymentStatus || 'Pending', subtotal, shipping, total, trackingNumber, estimatedDelivery, paymentType || (paymentMethod === 'cod' ? 'COD' : 'Paid')]
         );
 
         const order = orderResult.rows[0];
@@ -67,8 +67,13 @@ exports.createOrder = async (orderData) => {
 };
 
 exports.getAllOrders = async () => {
+    // Hide online orders that are still pending payment (not yet successful)
     const orderResult = await pool.query(
-        `SELECT * FROM orders ORDER BY created_at DESC`
+        `SELECT o.*, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default 
+         FROM orders o
+         LEFT JOIN user_addresses a ON o.address_id = a.id
+         WHERE o.payment_method = 'cod' OR o.payment_status != 'Pending'
+         ORDER BY o.created_at DESC`
     );
 
     const orders = orderResult.rows;
@@ -85,7 +90,11 @@ exports.getAllOrders = async () => {
 
 exports.getOrdersByUser = async (userId) => {
     const orderResult = await pool.query(
-        `SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC`,
+        `SELECT o.*, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default 
+         FROM orders o
+         LEFT JOIN user_addresses a ON o.address_id = a.id
+         WHERE o.user_id = $1 
+         ORDER BY o.created_at DESC`,
         [userId]
     );
 
