@@ -15,6 +15,7 @@ const wishlistRoutes = require('./routes/wishlistRoutes');
 const adminAnalyticsRoutes = require("./routes/adminAnalyticsRoutes");
 
 const app = express();
+app.set('trust proxy', 1);
 
 // Request logging middleware
 app.use((req, res, next) => {
