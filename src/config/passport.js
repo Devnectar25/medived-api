@@ -58,6 +58,7 @@ const handleSocialLogin = async (profile, provider, done) => {
 };
 
 // Google Strategy
+console.log('DEBUG: GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? 'FOUND' : 'MISSING');
 if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     passport.use(new GoogleStrategy({
         clientID: process.env.GOOGLE_CLIENT_ID,
@@ -69,6 +70,7 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
 }
 
 // Facebook Strategy
+console.log('DEBUG: FACEBOOK_APP_ID:', process.env.FACEBOOK_APP_ID ? 'FOUND' : 'MISSING');
 if (process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET) {
     passport.use(new FacebookStrategy({
         clientID: process.env.FACEBOOK_APP_ID,
