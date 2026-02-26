@@ -1,4 +1,6 @@
 const authService = require('../services/authService');
+const jwt = require('jsonwebtoken');
+
 
 exports.register = async (req, res) => {
     try {
@@ -55,3 +57,26 @@ exports.adminLogin = async (req, res) => {
         res.status(401).json({ success: false, message: error.message });
     }
 };
+
+exports.socialCallback = async (req, res) => {
+    try {
+        const user = req.user; // Passport attaches user here
+        const token = jwt.sign(
+            { id: user.username, role: 'user' },
+            process.env.JWT_SECRET || 'your_super_secret_key',
+            { expiresIn: '24h' }
+        );
+
+        const redirectUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+        res.redirect(`${redirectUrl}/auth/callback?token=${token}&user=${encodeURIComponent(JSON.stringify({
+            id: user.username,
+            email: user.emailid,
+            fullName: user.username,
+            avatar: user.avatar_url
+        }))}`);
+    } catch (error) {
+        console.error("Social Auth Error:", error);
+        res.redirect(`${process.env.CLIENT_URL || 'http://localhost:5173'}/auth?error=SocialLoginFailed`);
+    }
+};
+

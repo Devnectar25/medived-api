@@ -1,12 +1,12 @@
 const { Pool } = require('pg');
-require('dotenv').config();
+require('dotenv').config({ override: true });
+
 
 const pool = new Pool({
-    host: process.env.PGHOST,
-    user: process.env.PGUSER,
-    password: process.env.PGPASSWORD,
-    database: process.env.PGDATABASE,
-    port: process.env.PGPORT,
+    connectionString: `postgresql://${process.env.PGUSER}:${process.env.PGPASSWORD}@${process.env.PGHOST}:${process.env.PGPORT}/${process.env.PGDATABASE}`,
+    ssl: {
+        rejectUnauthorized: false
+    }
 });
 
 // The pool will emit an error on behalf of any idle client
