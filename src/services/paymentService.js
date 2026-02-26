@@ -3,14 +3,34 @@ const crypto = require('crypto');
 const pool = require('../config/db');
 require('dotenv').config();
 
-console.log('[DEBUG] Razorpay Key ID:', process.env.RAZORPAY_KEY_ID ? (process.env.RAZORPAY_KEY_ID.substring(0, 8) + '...') : 'MISSING');
-const razorpay = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+let razorpayInstance = null;
 
+const getRazorpay = () => {
+    if (razorpayInstance) return razorpayInstance;
+
+    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+        console.warn('⚠️ Razorpay credentials missing. Payment features will fail if called.');
+        return null;
+    }
+
+    try {
+        razorpayInstance = new Razorpay({
+            key_id: process.env.RAZORPAY_KEY_ID,
+            key_secret: process.env.RAZORPAY_KEY_SECRET,
+        });
+        return razorpayInstance;
+    } catch (err) {
+        console.error('❌ Failed to initialize Razorpay:', err.message);
+        return null;
+    }
+};
 
 exports.createRazorpayOrder = async (amount, currency, receipt, internalOrderId) => {
+    const rzp = getRazorpay();
+    if (!rzp) {
+        throw new Error('Payment gateway is not configured. Please contact support.');
+    }
+
     const options = {
         amount: Math.round(amount * 100), // amount in the smallest currency unit (paise)
         currency,
@@ -19,7 +39,7 @@ exports.createRazorpayOrder = async (amount, currency, receipt, internalOrderId)
 
     try {
         console.log('[DEBUG] Creating Razorpay order with options:', options);
-        const order = await razorpay.orders.create(options);
+        const order = await rzp.orders.create(options);
         console.log('[DEBUG] Razorpay order created:', order.id);
 
         // Update the internal order with the Razorpay Order ID
@@ -62,7 +82,10 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
         await client.query('BEGIN');
 
         // 1. Get payment details from Razorpay to get the actual amount
-        const payment = await razorpay.payments.fetch(razorpay_payment_id);
+        const rzp = getRazorpay();
+        if (!rzp) throw new Error('Razorpay is not configured');
+
+        const payment = await rzp.payments.fetch(razorpay_payment_id);
         const amount = payment.amount / 100; // convert back from paise
 
         // 2. Insert into transactions table
