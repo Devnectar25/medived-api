@@ -195,7 +195,7 @@ exports.searchProducts = async (req, res) => {
         if (!q) {
             return res.json({ success: true, data: [] });
         }
-        const data = await productService.nlpSearchProducts(q);
+        const data = await productService.chatbotSearchProducts(q);
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in searchProducts:", error);

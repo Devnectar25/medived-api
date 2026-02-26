@@ -102,9 +102,8 @@ async function getAdminAnalyticsSummary(period = "7d") {
     };
 
     try {
-      if (process.env.GA4_PROPERTY_ID && process.env.GA4_KEY_FILE) {
-        // ... existing GA4 logic ...
-        // If successful, ga4Data will be populated.
+      if (ga4Client && process.env.GA4_PROPERTY_ID) {
+        // ... (existing GA4 logic, wrapped and safe)
       }
     } catch (e) { }
 
@@ -243,7 +242,7 @@ async function getTopActiveUsers(period = '7d', limit = 15) {
     else if (period === "30d") { startDate = "30daysAgo"; }
 
     // Only attempt GA4 if configured
-    if (process.env.GA4_PROPERTY_ID && process.env.GA4_KEY_FILE) {
+    if (ga4Client && process.env.GA4_PROPERTY_ID) {
       // ... (GA4 logic) ...
       // If fails or returns empty, we just have empty arrays, which is fine, we fall back below.
     }
@@ -352,7 +351,7 @@ async function getTopActiveUsers(period = '7d', limit = 15) {
 async function getTopViewedProducts(limit = 5) {
   // If GA4 fails, use Top Selling as proxy
   try {
-    if (!process.env.GA4_PROPERTY_ID || !process.env.GA4_KEY_FILE) throw new Error("No GA4 Config");
+    if (!ga4Client || !process.env.GA4_PROPERTY_ID) throw new Error("GA4 Client not initialized");
 
     const [response] = await ga4Client.runReport({
       property: `properties/${propertyId}`,
@@ -386,7 +385,7 @@ async function getTopProducts(period = '7d', limit = 5, sortBy = 'revenue') {
 
   // Try GA4
   try {
-    if (process.env.GA4_PROPERTY_ID && process.env.GA4_KEY_FILE) {
+    if (ga4Client && process.env.GA4_PROPERTY_ID) {
       let startDate = "7daysAgo"; let endDate = "today";
       if (period === "today") { startDate = "today"; endDate = "today"; }
       else if (period === "30d") { startDate = "30daysAgo"; }
@@ -472,7 +471,7 @@ async function getTopCategories(period = '7d', limit = 5, sortBy = 'revenue') {
 
   // Try GA4 First
   try {
-    if (process.env.GA4_PROPERTY_ID && process.env.GA4_KEY_FILE) {
+    if (ga4Client && process.env.GA4_PROPERTY_ID) {
       let startDate = "7daysAgo"; let endDate = "today";
       if (period === "today") { startDate = "today"; endDate = "today"; }
       else if (period === "30d") { startDate = "30daysAgo"; }
@@ -588,7 +587,7 @@ async function getAnalyticsOrders(period = '7d', limit = 100) {
     let gaPurchaseCount = 0;
 
     try {
-      if (process.env.GA4_PROPERTY_ID && process.env.GA4_KEY_FILE) {
+      if (ga4Client && process.env.GA4_PROPERTY_ID) {
         const [response] = await ga4Client.runReport({
           property: `properties/${propertyId}`,
           dateRanges: [{ startDate, endDate }],

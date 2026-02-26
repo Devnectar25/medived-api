@@ -20,8 +20,8 @@ pool.connect().then(client => {
     console.error('❌ Database connection failed', err.stack);
 });
 
-const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${PORT} (bound to 0.0.0.0)`);
+const server = app.listen(PORT, '127.0.0.1', () => {
+    console.log(`🚀 Server running on http://127.0.0.1:${PORT}`);
 }).on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
         console.error(`❌ Error: Port ${PORT} is already in use.`);
@@ -34,9 +34,12 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 
 // Handle unhandled rejections
 process.on('unhandledRejection', (err) => {
-    console.error('UNHANDLED REJECTION! 💥 Shutting down...');
+    console.error('UNHANDLED REJECTION! 💥');
     console.error(err.name, err.message, err.stack);
-    server.close(() => {
-        process.exit(1);
-    });
+    // In dev, we might not want to kill the server for every rejection
+    if (process.env.NODE_ENV === 'production') {
+        server.close(() => {
+            process.exit(1);
+        });
+    }
 });
