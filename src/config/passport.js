@@ -24,7 +24,11 @@ const handleSocialLogin = async (profile, provider, done) => {
                 result = await pool.query("SELECT * FROM public.users WHERE emailid = $1", [email]);
                 if (result.rows.length > 0) {
                     user = result.rows[0];
-                    await pool.query(`UPDATE public.users SET ${provider}_id = $1, avatar_url = COALESCE(avatar_url, $2) WHERE id = $3`, [socialId, photoUrl, user.id]);
+                    // Use 'username' as the unique identifier for the WHERE clause
+                    await pool.query(
+                        `UPDATE public.users SET ${provider}_id = $1, avatar_url = COALESCE(avatar_url, $2) WHERE username = $3`,
+                        [socialId, photoUrl, user.username]
+                    );
                 }
             }
         }
