@@ -2,25 +2,29 @@
 
 const { BetaAnalyticsDataClient } = require("@google-analytics/data");
 const path = require("path");
+const fs = require("fs");
 
-// Load env vars (make sure dotenv is already loaded in server.js/app.js)
 const propertyId = process.env.GA4_PROPERTY_ID;
 const keyFilePath = process.env.GA4_KEY_FILE;
 
 let ga4Client = null;
 
 if (propertyId && keyFilePath) {
-  try {
-    // Create GA4 Data API client
-    ga4Client = new BetaAnalyticsDataClient({
-      keyFilename: path.resolve(keyFilePath),
-    });
-    console.log('✅ GA4 client initialized');
-  } catch (err) {
-    console.error('❌ Failed to initialize GA4 client:', err.message);
+  const resolvedPath = path.resolve(process.cwd(), keyFilePath);
+  if (fs.existsSync(resolvedPath)) {
+    try {
+      ga4Client = new BetaAnalyticsDataClient({
+        keyFilename: resolvedPath,
+      });
+      console.log("✅ GA4 Client initialized successfully");
+    } catch (err) {
+      console.error("❌ Failed to initialize GA4 Client:", err.message);
+    }
+  } else {
+    console.warn(`⚠️ GA4 Key file not found at ${resolvedPath}. GA4 features will be disabled.`);
   }
 } else {
-  console.warn("⚠️ GA4_PROPERTY_ID or GA4_KEY_FILE is missing - GA4 features will be disabled");
+  console.log("ℹ️ GA4 configuration missing. GA4 features are disabled.");
 }
 
 module.exports = {

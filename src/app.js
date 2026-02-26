@@ -16,6 +16,12 @@ const adminAnalyticsRoutes = require("./routes/adminAnalyticsRoutes");
 
 const app = express();
 
+// Request logging middleware
+app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    next();
+});
+
 // Manual CORS middleware — cors package is unreliable on Vercel serverless
 // for Authorization headers. This is explicit and guaranteed to work.
 app.use((req, res, next) => {
@@ -39,15 +45,24 @@ app.use((req, res, next) => {
         return next();
     }
 
-    // Only parse if content-type is json
     const contentType = req.headers['content-type'];
     if (!contentType || !contentType.includes('application/json')) {
         return next();
     }
 
+    // Skip manual parser for image uploads as they are handled by multer
+    if (req.url.includes('/upload-image')) {
+        return next();
+    }
+
     let data = '';
+    const MAX_SIZE = 1 * 1024 * 1024; // 1MB limit
+
     req.on('data', chunk => {
         data += chunk;
+        if (data.length > MAX_SIZE) {
+            req.destroy(); // Terminate request if too large
+        }
     });
 
     req.on('end', () => {
