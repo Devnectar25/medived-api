@@ -2,7 +2,17 @@ const pool = require('../config/db');
 
 exports.getCart = async (userId) => {
     const result = await pool.query(
-        `SELECT c.id, c.product_id, c.quantity, p.productname as name, p.price, p.image, p.originalprice, p.discount
+        `SELECT
+            c.id,
+            c.product_id,
+            c.quantity,
+            p.productname  AS name,
+            p.price,
+            p.image,
+            p.originalprice,
+            p.discount,
+            p.category_id,
+            p.brand        AS brand_id
          FROM cart_items c
          JOIN products p ON c.product_id = p.product_id
          WHERE c.user_id = $1`,
@@ -13,7 +23,9 @@ exports.getCart = async (userId) => {
         productId: item.product_id.toString(),
         price: parseFloat(item.price),
         originalPrice: parseFloat(item.originalprice),
-        discount: parseFloat(item.discount)
+        discount: parseFloat(item.discount),
+        category_id: item.category_id ?? null,
+        brand_id: item.brand_id ?? null
     }));
 };
 

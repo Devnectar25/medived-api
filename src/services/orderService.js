@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const couponService = require('./couponService');
 
 exports.createOrder = async (orderData) => {
     const client = await pool.connect();
@@ -7,43 +8,131 @@ exports.createOrder = async (orderData) => {
 
         const {
             userId, orderNumber, addressId, paymentMethod, paymentStatus, paymentType,
-            subtotal, shipping, total, items, trackingNumber, estimatedDelivery
+            subtotal, shipping, total, items, trackingNumber, estimatedDelivery,
+            couponCode   // optional — sent from Checkout.tsx when user applied a coupon
         } = orderData;
+        // subtotal from client is received but intentionally never used in computation — dbSubtotal below is used instead
 
-        // 1. Create Order
+        // ── PRE-STEP: Always re-fetch real prices from DB ──────────────────────
+        // This ensures scope matching AND subtotal calculations use authoritative
+        // product prices — not values the client could have tampered with.
+        const cartResult = await client.query(
+            `SELECT
+                ci.product_id,
+                ci.product_id AS id,
+                ci.quantity,
+                p.price,
+                p.category_id,
+                p.brand   AS brand_id
+             FROM cart_items ci
+             JOIN products p ON ci.product_id = p.product_id
+             WHERE ci.user_id = $1`,
+            [userId]
+        );
+        const dbCartItems = cartResult.rows.map(row => ({
+            ...row,
+            price: parseFloat(row.price),
+            quantity: parseInt(row.quantity, 10)
+        }));
+
+        // Compute subtotal from DB cart prices — client value is ignored
+        const dbSubtotal = dbCartItems.reduce(
+            (sum, item) => sum + (item.price * item.quantity),
+            0
+        );
+
+        // ── STEP 1: Coupon validation (server-side, inside transaction) ────────
+        // We never trust the client's `total`. We always recompute here.
+        let discountAmount = 0;
+        let couponId = null;                // FK → coupons.id; null if no coupon applied
+        let validatedCouponCode = null;
+        // originalTotal = pre-discount total (dbSubtotal + shipping); used for audit clarity
+        const originalTotal = dbSubtotal + parseFloat(shipping || 0);
+        let finalTotal = originalTotal;
+
+        if (couponCode) {
+            // dbCartItems already fetched above from DB — real prices, not client values.
+            // validateCoupon: checks active, expiry, min_order_value (vs dbSubtotal),
+            //                 usage_limit, assignment eligibility, scope matching.
+            const validation = await couponService.validateCoupon(
+                couponCode,
+                dbSubtotal,             // server-computed from DB prices, never client value
+                dbCartItems,
+                userId
+            );
+
+            discountAmount = validation.discountAmount;
+            couponId = validation.coupon?.id || null;      // FK — links order to coupons row
+            validatedCouponCode = validation.coupon.code;  // normalized uppercase from service
+            finalTotal = originalTotal - discountAmount;   // originalTotal already = dbSubtotal + shipping
+
+            if (finalTotal < 0) finalTotal = 0;
+        }
+
+        // ── STEP 2: Insert order with coupon fields ────────────────────────────
         const orderResult = await client.query(
             `INSERT INTO orders (
                 user_id, order_number, address_id, payment_method, payment_status, payment_type,
-                subtotal, shipping, total, status, tracking_number, estimated_delivery, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $11, $6, $7, $8, 'Pending', $9, $10, NOW(), NOW())
+                subtotal, original_total, shipping,
+                discount_amount, total,
+                coupon_code, coupon_id,
+                status, tracking_number, estimated_delivery, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'Pending', $14, $15, NOW(), NOW())
             RETURNING *`,
-            [userId, orderNumber, addressId, paymentMethod, paymentStatus || 'Pending', subtotal, shipping, total, trackingNumber, estimatedDelivery, paymentType || (paymentMethod === 'cod' ? 'COD' : 'Paid')]
+            [
+                userId,                          // $1
+                orderNumber,                     // $2
+                addressId,                       // $3
+                paymentMethod,                   // $4
+                paymentStatus || 'Pending',      // $5
+                paymentType || (paymentMethod === 'cod' ? 'COD' : 'Paid'), // $6
+                dbSubtotal,                      // $7  — server-computed cart sum, never client value
+                originalTotal,                   // $8  — pre-discount total (dbSubtotal + shipping)
+                shipping || 0,                   // $9
+                discountAmount,                  // $10 — 0 if no coupon
+                finalTotal,                      // $11 — server-computed, never from client
+                validatedCouponCode || null,     // $12 — normalized code string (kept for history)
+                couponId,                        // $13 — FK → coupons.id; null if no coupon
+                trackingNumber,                  // $14
+                estimatedDelivery                // $15
+            ]
         );
 
         const order = orderResult.rows[0];
 
-        // 2. Create Order Items and Update Stock
+        // ── STEP 3: Mark coupon assignment as used ─────────────────────────────
+        // Only runs if a valid coupon was applied. Silently skips if the coupon
+        // was global (no assignment row exists) — that is expected and correct.
+        if (validatedCouponCode) {
+            await client.query(
+                `UPDATE coupon_assignments
+                 SET status  = 'used',
+                     used_at = NOW()
+                 WHERE coupon_id = (SELECT id FROM coupons WHERE code = $1)
+                   AND user_id   = $2
+                   AND status    = 'assigned'`,
+                [validatedCouponCode, userId]
+            );
+        }
+
+        // ── STEP 4: Insert order items + update stock ──────────────────────────
         for (const item of items) {
-            // Add item
             await client.query(
                 `INSERT INTO order_items (order_id, product_id, name, price, quantity, image, created_at)
                  VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
                 [order.id, item.id || item.productId, item.name, item.price, item.quantity, item.image]
             );
 
-            // Update Stock
-            // Decrement stock_quantity and quantity (syncing both for now)
             const stockUpdateResult = await client.query(
-                `UPDATE products 
+                `UPDATE products
                  SET stock_quantity = GREATEST(0, stock_quantity - $2),
-                     quantity = GREATEST(0, quantity - $2),
-                     updated_at = NOW()
+                     quantity       = GREATEST(0, quantity - $2),
+                     updated_at     = NOW()
                  WHERE product_id = $1
                  RETURNING stock_quantity`,
                 [item.id || item.productId, item.quantity]
             );
 
-            // If stock becomes 0, mark as out of stock
             if (stockUpdateResult.rows[0]?.stock_quantity === 0) {
                 await client.query(
                     `UPDATE products SET instock = false WHERE product_id = $1`,
@@ -52,12 +141,13 @@ exports.createOrder = async (orderData) => {
             }
         }
 
-        // 3. Clear Cart (since order is placed)
+        // ── STEP 5: Clear cart ─────────────────────────────────────────────────
         await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [userId]);
 
         await client.query('COMMIT');
         order.items = items;
         return order;
+
     } catch (error) {
         await client.query('ROLLBACK');
         throw error;
