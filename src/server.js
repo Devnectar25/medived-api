@@ -20,8 +20,8 @@ pool.connect().then(client => {
     console.error('❌ Database connection failed', err.stack);
 });
 
-const server = app.listen(PORT, '127.0.0.1', () => {
-    console.log(`🚀 Server running on http://127.0.0.1:${PORT}`);
+const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
 }).on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
         console.error(`❌ Error: Port ${PORT} is already in use.`);
