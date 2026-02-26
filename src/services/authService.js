@@ -135,6 +135,7 @@ exports.verifyOtp = async (email, otp) => {
     if (record.type === 'registration') {
         console.log(`[verifyOtp Service] Processing registration for email: ${email}`);
         const { email: userEmail, password, fullName, phone } = record.registrationData;
+
         const username = userEmail;
 
         const result = await pool.query(
