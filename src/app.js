@@ -96,6 +96,7 @@ app.use('/api/addresses', require('./routes/addressRoutes'));
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/cart', require('./routes/cartRoutes'));
 app.use('/api/orders', require('./routes/orderRoutes'));
+app.use('/api', require('./routes/couponRoutes'));
 app.use("/api/admin/analytics", adminAnalyticsRoutes);
 app.use('/api/contact', require('./routes/contactRoutes'));
 app.use('/api/faqs', require('./routes/faqRoutes'));
@@ -103,6 +104,7 @@ app.use('/api/analytics', require('./routes/publicAnalyticsRoutes'));
 // app.use('/api/debug', require('./routes/debugRoutes')); // Temporary debug route (Disabled for prod)
 app.use('/api/payments', require('./routes/paymentRoutes'));
 app.use('/api/chatbot', require('./routes/chatbotRoutes'));
+app.use('/api/admin/targeting', require('./routes/targetingRoutes'));
 
 
 app.get('/', (req, res) => {
