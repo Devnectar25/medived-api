@@ -20,26 +20,29 @@ pool.connect().then(client => {
     console.error('❌ Database connection failed', err.stack);
 });
 
-const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
-}).on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-        console.error(`❌ Error: Port ${PORT} is already in use.`);
-    } else {
-        console.error('❌ Server startup error:', err);
-    }
-    process.exit(1);
-});
+// Only start the server if we're not running as a module (e.g., on Vercel)
+if (require.main === module) {
+    const server = app.listen(PORT, '0.0.0.0', () => {
+        console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
+    }).on('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+            console.error(`❌ Error: Port ${PORT} is already in use.`);
+        } else {
+            console.error('❌ Server startup error:', err);
+        }
+        process.exit(1);
+    });
 
+    // Handle unhandled rejections
+    process.on('unhandledRejection', (err) => {
+        console.error('UNHANDLED REJECTION! 💥');
+        console.error(err.name, err.message, err.stack);
+        if (process.env.NODE_ENV === 'production') {
+            server.close(() => {
+                process.exit(1);
+            });
+        }
+    });
+}
 
-// Handle unhandled rejections
-process.on('unhandledRejection', (err) => {
-    console.error('UNHANDLED REJECTION! 💥');
-    console.error(err.name, err.message, err.stack);
-    // In dev, we might not want to kill the server for every rejection
-    if (process.env.NODE_ENV === 'production') {
-        server.close(() => {
-            process.exit(1);
-        });
-    }
-});
+module.exports = app;
