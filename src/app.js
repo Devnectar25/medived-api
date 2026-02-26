@@ -11,7 +11,6 @@ const healthTipRoutes = require('./routes/healthTipRoutes');
 const wishlistRoutes = require('./routes/wishlistRoutes');
 const adminAnalyticsRoutes = require("./routes/adminAnalyticsRoutes");
 
-
 const app = express();
 
 // Manual CORS middleware — cors package is unreliable on Vercel serverless
