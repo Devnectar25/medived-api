@@ -67,8 +67,12 @@ exports.socialCallback = async (req, res) => {
             { expiresIn: '24h' }
         );
 
-        const redirectUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-        res.redirect(`${redirectUrl}/auth/callback?token=${token}&user=${encodeURIComponent(JSON.stringify({
+        const redirectPath = req.session.returnTo || '/';
+        console.log(`[socialCallback] Redirecting to: ${redirectPath}`);
+        delete req.session.returnTo;
+
+        const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+        res.redirect(`${clientUrl}/auth/callback?token=${token}&redirect=${encodeURIComponent(redirectPath)}&user=${encodeURIComponent(JSON.stringify({
             id: user.username,
             email: user.emailid,
             fullName: user.username,
