@@ -66,31 +66,57 @@ exports.createOrder = async (orderData) => {
     }
 };
 
-exports.getAllOrders = async () => {
+exports.getAllOrders = async (options = {}) => {
+    const { limit = 10, offset = 0 } = options;
+
     // Hide online orders that are still pending payment (not yet successful)
+    // Use json_agg to avoid N+1 query problem and improve performance
+    // Also fetch the total count in the same query context if possible, or separately
+
+    const countResult = await pool.query(
+        `SELECT COUNT(*) FROM orders 
+         WHERE payment_method = 'cod' OR payment_status != 'Pending'`
+    );
+    const totalCount = parseInt(countResult.rows[0].count);
+
     const orderResult = await pool.query(
-        `SELECT o.*, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default 
+        `SELECT o.*, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+                COALESCE(
+                    (SELECT json_agg(items_data)
+                     FROM (
+                         SELECT * FROM order_items WHERE order_id = o.id
+                         ORDER BY created_at ASC
+                     ) items_data
+                    ), '[]'
+                ) as items
          FROM orders o
          LEFT JOIN user_addresses a ON o.address_id = a.id
          WHERE o.payment_method = 'cod' OR o.payment_status != 'Pending'
-         ORDER BY o.created_at DESC`
+         ORDER BY o.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
     );
 
-    const orders = orderResult.rows;
-    for (const order of orders) {
-        const itemsResult = await pool.query(
-            `SELECT * FROM order_items WHERE order_id = $1`,
-            [order.id]
-        );
-        order.items = itemsResult.rows;
-    }
-
-    return orders;
+    return {
+        orders: orderResult.rows,
+        totalCount: totalCount,
+        limit,
+        offset
+    };
 };
 
 exports.getOrdersByUser = async (userId) => {
+    // Use json_agg to avoid N+1 query problem and improve performance
     const orderResult = await pool.query(
-        `SELECT o.*, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default 
+        `SELECT o.*, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+                COALESCE(
+                    (SELECT json_agg(items_data)
+                     FROM (
+                         SELECT * FROM order_items WHERE order_id = o.id
+                         ORDER BY created_at ASC
+                     ) items_data
+                    ), '[]'
+                ) as items
          FROM orders o
          LEFT JOIN user_addresses a ON o.address_id = a.id
          WHERE o.user_id = $1 
@@ -98,21 +124,20 @@ exports.getOrdersByUser = async (userId) => {
         [userId]
     );
 
-    const orders = orderResult.rows;
-    for (const order of orders) {
-        const itemsResult = await pool.query(
-            `SELECT * FROM order_items WHERE order_id = $1`,
-            [order.id]
-        );
-        order.items = itemsResult.rows;
-    }
-
-    return orders;
+    return orderResult.rows;
 };
 
 exports.getOrderById = async (orderId) => {
     const orderResult = await pool.query(
-        `SELECT o.*, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default 
+        `SELECT o.*, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+                COALESCE(
+                    (SELECT json_agg(items_data)
+                     FROM (
+                         SELECT * FROM order_items WHERE order_id = o.id
+                         ORDER BY created_at ASC
+                     ) items_data
+                    ), '[]'
+                ) as items
          FROM orders o
          LEFT JOIN user_addresses a ON o.address_id = a.id
          WHERE o.id = $1`,
@@ -121,14 +146,29 @@ exports.getOrderById = async (orderId) => {
 
     if (orderResult.rows.length === 0) return null;
 
-    const order = orderResult.rows[0];
-    const itemsResult = await pool.query(
-        `SELECT * FROM order_items WHERE order_id = $1`,
-        [order.id]
-    );
-    order.items = itemsResult.rows;
+    return orderResult.rows[0];
+};
 
-    return order;
+exports.getOrderStats = async () => {
+    const result = await pool.query(
+        `SELECT 
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE status = 'Pending') as pending,
+            COUNT(*) FILTER (WHERE status = 'Processing') as processing,
+            COUNT(*) FILTER (WHERE status = 'Delivered') as delivered,
+            COUNT(*) FILTER (WHERE payment_status = 'Pending') as pending_payment
+         FROM orders
+         WHERE payment_method = 'cod' OR payment_status != 'Pending'`
+    );
+
+    const stats = result.rows[0];
+    return {
+        total: parseInt(stats.total),
+        pending: parseInt(stats.pending),
+        processing: parseInt(stats.processing),
+        delivered: parseInt(stats.delivered),
+        pendingPayment: parseInt(stats.pending_payment)
+    };
 };
 
 exports.updateOrderStatus = async (orderId, status) => {
