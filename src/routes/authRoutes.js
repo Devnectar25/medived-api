@@ -18,7 +18,14 @@ router.get('/google', (req, res, next) => {
     const state = crypto.randomBytes(32).toString('hex');
     req.session = req.session || {};
     req.session.oauth_state = state;
-    passport.authenticate('google', { scope: ['profile', 'email'], state })(req, res, next);
+    // Capture redirect URL if provided
+    if (req.query.redirect) {
+        req.session.returnTo = req.query.redirect;
+    }
+    req.session.save((err) => {
+        if (err) return next(err);
+        passport.authenticate('google', { scope: ['profile', 'email'], state })(req, res, next);
+    });
 });
 
 router.get('/google/callback', (req, res, next) => {
@@ -41,7 +48,14 @@ router.get('/facebook', (req, res, next) => {
     const state = crypto.randomBytes(32).toString('hex');
     req.session = req.session || {};
     req.session.oauth_state_facebook = state;
-    passport.authenticate('facebook', { scope: ['email'], state })(req, res, next);
+    // Capture redirect URL if provided
+    if (req.query.redirect) {
+        req.session.returnTo = req.query.redirect;
+    }
+    req.session.save((err) => {
+        if (err) return next(err);
+        passport.authenticate('facebook', { scope: ['email'], state })(req, res, next);
+    });
 });
 
 router.get('/facebook/callback', (req, res, next) => {
