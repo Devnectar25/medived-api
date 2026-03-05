@@ -19,6 +19,7 @@ async function getAdminAnalyticsSummary(req, res) {
     res.status(500).json({
       success: false,
       message: "Failed to fetch analytics data",
+      error: error.message
     });
   }
 }
@@ -162,6 +163,7 @@ async function getDashboardStats(req, res) {
     res.status(500).json({
       success: false,
       message: "Failed to fetch dashboard stats",
+      error: error.message
     });
   }
 }

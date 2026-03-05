@@ -10,7 +10,11 @@ const pool = new Pool({
     port: process.env.PGPORT,
     ssl: {
         rejectUnauthorized: false
-    }
+    },
+    max: 20,
+    idleTimeoutMillis: 60000,
+    connectionTimeoutMillis: 10000,
+    keepAlive: true,
 });
 
 // The pool will emit an error on behalf of any idle client
