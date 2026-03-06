@@ -1,12 +1,12 @@
 // src/ga/analyticsService.cjs
 
 const { ga4Client, propertyId } = require("./ga4Client.cjs");
+const pool = require('../config/db');
 
 /**
  * Fetch high-level analytics summary for Admin Dashboard
  */
 async function getAdminAnalyticsSummary(period = "7d") {
-  const pool = require('../config/db');
 
   const fallbackTrend = { value: 0, trend: null };
   const getTrend = (curr, prev) => {
@@ -198,7 +198,6 @@ async function getAdminAnalyticsSummary(period = "7d") {
  * Track an event locally
  */
 async function trackEvent(eventName, userId, sessionId, metadata) {
-  const pool = require('../config/db');
   try {
     await pool.query(
       `INSERT INTO analytics_events (event_name, user_id, session_id, metadata) VALUES ($1, $2, $3, $4)`,
@@ -218,7 +217,6 @@ async function trackEvent(eventName, userId, sessionId, metadata) {
  * 3. Returns combined confirmed users.
  */
 async function getTopActiveUsers(period = '7d', limit = 15) {
-  const pool = require('../config/db');
 
   // Calculate DB start date
   let dbStartDate = new Date();
@@ -374,7 +372,6 @@ async function getTopViewedProducts(limit = 5) {
 }
 
 async function getTopProducts(period = '7d', limit = 5, sortBy = 'revenue') {
-  const pool = require('../config/db');
 
   let dbStartDate = new Date();
   if (period === 'today') dbStartDate.setHours(0, 0, 0, 0);
@@ -461,7 +458,6 @@ async function getTopProducts(period = '7d', limit = 5, sortBy = 'revenue') {
 }
 
 async function getTopCategories(period = '7d', limit = 5, sortBy = 'revenue') {
-  const pool = require('../config/db');
 
   // Calculate Date
   let dbStartDate = new Date();
@@ -543,7 +539,6 @@ async function getTopCategories(period = '7d', limit = 5, sortBy = 'revenue') {
  * Database Only
  */
 async function getAllAnalyticsUsers(limit = 100) {
-  const pool = require('../config/db');
   try {
     // Basic user info - fixed column names based on schema inspection
     const query = `
@@ -573,7 +568,6 @@ async function getAllAnalyticsUsers(limit = 100) {
  * Fallback: If ID match fails, use GA4 Count -> DB Recent Orders
  */
 async function getAnalyticsOrders(period = '7d', limit = 100) {
-  const pool = require('../config/db');
 
   try {
     // 1. Determine Date Range
@@ -677,7 +671,6 @@ async function getAnalyticsOrders(period = '7d', limit = 100) {
  * Faster than fetching all data.
  */
 const getDashboardEntityCounts = async () => {
-  const pool = require('../config/db'); // Added this line to ensure 'pool' is defined
   try {
     const [brands, categories, products, tips, orders] = await Promise.all([
       pool.query('SELECT COUNT(*) as count FROM brand'),
@@ -696,7 +689,14 @@ const getDashboardEntityCounts = async () => {
     };
   } catch (error) {
     console.error("Error fetching dashboard entity counts:", error);
-    throw error;
+    // Return fallback zeros instead of throwing to prevent 500 error
+    return {
+      brands: 0,
+      categories: 0,
+      products: 0,
+      tips: 0,
+      orders: 0
+    };
   }
 };
 
