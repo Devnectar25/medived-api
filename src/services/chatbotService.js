@@ -556,16 +556,17 @@ exports.processQuery = async (query, sessionId = 'default') => {
             };
         }
 
-        // No products found at all
-        await logUnansweredQuery(sanitizedQuery, 'product_listing');
-        return {
-            answer: listingIntent.isGeneral
-                ? "Sorry, we don't have products available right now."
-                : `Sorry, we don't have any "${listingIntent.keyword}" products available right now.\nTry asking about a different category or type!`,
-            intent: 'product_listing',
-            confidence: 1.0,
-            products: [],
-        };
+        // if products not found and it's a general request, just return empty
+        if (listingIntent.isGeneral) {
+            await logUnansweredQuery(sanitizedQuery, 'product_listing');
+            return {
+                answer: "Sorry, we don't have products available right now.",
+                intent: 'product_listing',
+                confidence: 1.0,
+                products: [],
+            };
+        }
+        // If it's specific (e.g. misspelled category or product name), allow it to fall through to fuzzy match!
     }
 
     // ── Stage 5: Company / People Info Guard ──────────────────────────────────
@@ -679,11 +680,21 @@ exports.processQuery = async (query, sessionId = 'default') => {
             ).catch(() => { });
 
             let products = [];
-            if (entry.intent === 'product_info' || entry.intent === 'product_search') {
-                const keyword = entry.keywords && entry.keywords.length > 0
-                    ? entry.keywords[0]
-                    : sanitizedQuery;
+            // Use the provided keyword from DB, or extract from query if it's long enough.
+            const keyword = entry.keywords && entry.keywords.length > 0
+                ? entry.keywords[0]
+                : (sanitizedQuery.length > 3 ? sanitizedQuery : null);
+
+            // Fetch products if there is any meaningful keyword associated with the knowledge base entry.
+            // This ensures questions about "immunity" will suggest immunity products alongside the helpful answer.
+            if (keyword) {
                 products = await productService.simpleChatbotSearch(keyword);
+
+                // If the direct keyword failed, but this was a product intent, try again with the sanitized query
+                if (products.length === 0 && (entry.intent === 'product_info' || entry.intent === 'product_search')) {
+                    products = await productService.simpleChatbotSearch(sanitizedQuery);
+                }
+
                 if (products.length > 0) {
                     setSession(sessionId, {
                         lastProducts: products,
@@ -788,6 +799,50 @@ exports.processQuery = async (query, sessionId = 'default') => {
         confidence: 0.0,
         products: []
     };
+};
+
+// ─── Smart Search Wrapper ───────────────────────────────────────────────────
+
+/**
+ * processSmartSearch
+ * Uses the NLP pipeline but injects previous results array directly into 
+ * the session context so that stateless API calls can still use 
+ * conversational features like "show other options".
+ */
+exports.processSmartSearch = async (query, previousResults = []) => {
+    if (!query) return { answer: null, intent: 'fallback', products: [] };
+
+    const sessionId = `smartsearch_${Date.now()}_${Math.random()}`;
+
+    // Try to resolve category from previous items to aid alternative requests
+    let lastCategory = '';
+    if (previousResults && previousResults.length > 0) {
+        try {
+            const firstId = previousResults[0];
+            // ID might be passed as int or string, handles both
+            const result = await pool.query(
+                'SELECT c.name as category_name FROM products p LEFT JOIN category c ON p.category_id = c.category_id WHERE p.product_id = $1',
+                [firstId]
+            );
+            if (result.rows.length > 0) {
+                lastCategory = result.rows[0].category_name || '';
+            }
+        } catch (e) { }
+    }
+
+    // Seed temporary session
+    setSession(sessionId, {
+        lastProducts: previousResults.map(id => ({ id: id.toString() })),
+        lastKeyword: '',
+        lastCategory: lastCategory
+    });
+
+    const result = await exports.processQuery(query, sessionId);
+
+    // Clean up immediately for statelessness
+    sessionStore.delete(sessionId);
+
+    return result;
 };
 
 // ─── Query Logger ──────────────────────────────────────────────────────────────

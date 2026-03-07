@@ -1,4 +1,5 @@
 const productService = require('../services/productService');
+const chatbotService = require('../services/chatbotService');
 
 exports.getProducts = async (req, res) => {
     try {
@@ -199,6 +200,22 @@ exports.searchProducts = async (req, res) => {
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in searchProducts:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+exports.smartSearch = async (req, res) => {
+    try {
+        const { query, previousResults } = req.body;
+
+        if (!query) {
+            return res.json({ success: true, data: { products: [], answer: null, intent: null } });
+        }
+
+        const result = await chatbotService.processSmartSearch(query, previousResults || []);
+        res.json({ success: true, data: result });
+    } catch (error) {
+        console.error("Error in smartSearch:", error);
         res.status(500).json({ success: false, error: error.message });
     }
 };

@@ -9,15 +9,16 @@ exports.createOrder = async (orderData) => {
         const {
             userId, orderNumber, addressId, paymentMethod, paymentStatus, paymentType,
             subtotal, shipping, total, items, trackingNumber, estimatedDelivery,
-            couponCode   // optional — sent from Checkout.tsx when user applied a coupon
+            couponCode,   // optional — sent from Checkout.tsx when user applied a coupon
+            cartItemIds
         } = orderData;
         // subtotal from client is received but intentionally never used in computation — dbSubtotal below is used instead
 
         // ── PRE-STEP: Always re-fetch real prices from DB ──────────────────────
         // This ensures scope matching AND subtotal calculations use authoritative
         // product prices — not values the client could have tampered with.
-        const cartResult = await client.query(
-            `SELECT
+
+        let cartQuery = `SELECT
                 ci.product_id,
                 ci.product_id AS id,
                 ci.quantity,
@@ -26,9 +27,15 @@ exports.createOrder = async (orderData) => {
                 p.brand   AS brand_id
              FROM cart_items ci
              JOIN products p ON ci.product_id = p.product_id
-             WHERE ci.user_id = $1`,
-            [userId]
-        );
+             WHERE ci.user_id = $1`;
+        let cartParams = [userId];
+
+        if (cartItemIds && cartItemIds.length > 0) {
+            cartQuery += ` AND ci.product_id = ANY($2)`;
+            cartParams.push(cartItemIds);
+        }
+
+        const cartResult = await client.query(cartQuery, cartParams);
         const dbCartItems = cartResult.rows.map(row => ({
             ...row,
             price: parseFloat(row.price),
@@ -142,7 +149,11 @@ exports.createOrder = async (orderData) => {
         }
 
         // ── STEP 5: Clear cart ─────────────────────────────────────────────────
-        await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [userId]);
+        if (cartItemIds && cartItemIds.length > 0) {
+            await client.query(`DELETE FROM cart_items WHERE user_id = $1 AND product_id = ANY($2)`, [userId, cartItemIds]);
+        } else {
+            await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [userId]);
+        }
 
         await client.query('COMMIT');
         order.items = items;
