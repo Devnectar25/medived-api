@@ -12,6 +12,9 @@ router.get('/featured', productController.getFeaturedProducts);
 // GET /api/products/search
 router.get('/search', productController.searchProducts);
 
+// POST /api/products/smart-search
+router.post('/smart-search', productController.smartSearch);
+
 // GET /api/products/:id
 router.get('/:id', productController.getProduct);
 
