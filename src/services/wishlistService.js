@@ -36,3 +36,32 @@ exports.removeFromWishlist = async (userId, productId) => {
     );
     return result.rows[0];
 };
+
+exports.getWishlistCount = async (userId) => {
+    const result = await pool.query(
+        'SELECT COUNT(*) FROM wishlist WHERE user_id = $1',
+        [userId]
+    );
+    return parseInt(result.rows[0].count);
+};
+
+exports.toggleWishlist = async (userId, productId) => {
+    const checkResult = await pool.query(
+        'SELECT * FROM wishlist WHERE user_id = $1 AND product_id = $2',
+        [userId, productId]
+    );
+
+    if (checkResult.rows.length > 0) {
+        await pool.query(
+            'DELETE FROM wishlist WHERE user_id = $1 AND product_id = $2',
+            [userId, productId]
+        );
+        return { added: false };
+    } else {
+        await pool.query(
+            'INSERT INTO wishlist (user_id, product_id) VALUES ($1, $2)',
+            [userId, productId]
+        );
+        return { added: true };
+    }
+};

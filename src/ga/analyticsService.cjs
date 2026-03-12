@@ -49,16 +49,29 @@ async function getAdminAnalyticsSummary(period = "7d") {
       // Total Users (cumulative up to end date)
       const usersRes = await pool.query('SELECT COUNT(*) as count FROM users WHERE createdate <= $1', [end.toISOString()]);
 
-      // Orders & Revenue (within period)
+      // Orders & Revenue (within period) - Only successful orders
       const ordersRes = await pool.query(
-        'SELECT COUNT(*) as count, COALESCE(SUM(total), 0) as revenue FROM orders WHERE created_at >= $1 AND created_at <= $2',
+        `SELECT COUNT(*) as count, COALESCE(SUM(total), 0) as revenue 
+         FROM orders 
+         WHERE created_at >= $1 AND created_at <= $2 
+         AND (payment_method = 'cod' OR payment_status != 'Pending')`,
+        [start.toISOString(), end.toISOString()]
+      );
+
+      // Potential Users / Abandoned Checkouts
+      const potentialUsersRes = await pool.query(
+        `SELECT COUNT(*) as count 
+         FROM orders 
+         WHERE created_at >= $1 AND created_at <= $2 
+         AND (payment_method != 'cod' AND payment_status = 'Pending')`,
         [start.toISOString(), end.toISOString()]
       );
 
       return {
         users: parseInt(usersRes.rows[0].count),
         orders: parseInt(ordersRes.rows[0].count),
-        revenue: parseFloat(ordersRes.rows[0].revenue)
+        revenue: parseFloat(ordersRes.rows[0].revenue),
+        potentialUsers: parseInt(potentialUsersRes.rows[0].count)
       };
     };
 
@@ -161,6 +174,7 @@ async function getAdminAnalyticsSummary(period = "7d") {
       totalUsers: buildKPI(currMetrics.users, prevMetrics.users),
       activeUsers: buildKPI(ga4Data.activeUsers, ga4Data.prevActiveUsers),
       totalOrders: buildKPI(currMetrics.orders, prevMetrics.orders),
+      potentialUsers: currMetrics.potentialUsers,
       totalRevenue: buildKPI(currMetrics.revenue, prevMetrics.revenue),
 
       conversionRate: { value: 0, trend: null },
@@ -672,12 +686,13 @@ async function getAnalyticsOrders(period = '7d', limit = 100) {
  */
 const getDashboardEntityCounts = async () => {
   try {
-    const [brands, categories, products, tips, orders] = await Promise.all([
+    const [brands, categories, products, tips, orders, potentialUsers] = await Promise.all([
       pool.query('SELECT COUNT(*) as count FROM brand'),
       pool.query('SELECT COUNT(*) as count FROM category'),
       pool.query('SELECT COUNT(*) as count FROM products'),
       pool.query('SELECT COUNT(*) as count FROM health_tips'),
-      pool.query('SELECT COUNT(*) as count FROM orders')
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending')"),
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method != 'cod' AND payment_status = 'Pending')")
     ]);
 
     return {
@@ -685,7 +700,8 @@ const getDashboardEntityCounts = async () => {
       categories: parseInt(categories.rows[0].count),
       products: parseInt(products.rows[0].count),
       tips: parseInt(tips.rows[0].count),
-      orders: parseInt(orders.rows[0].count)
+      orders: parseInt(orders.rows[0].count),
+      potentialUsers: parseInt(potentialUsers.rows[0].count)
     };
   } catch (error) {
     console.error("Error fetching dashboard entity counts:", error);

@@ -32,3 +32,26 @@ exports.removeFromWishlist = async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+
+exports.getWishlistCount = async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const count = await wishlistService.getWishlistCount(userId);
+        res.json({ success: true, count });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+exports.toggleWishlist = async (req, res) => {
+    try {
+        const { userId, productId } = req.body;
+        if (!userId || !productId) {
+            return res.status(400).json({ success: false, message: 'User ID and Product ID are required' });
+        }
+        const result = await wishlistService.toggleWishlist(userId, productId);
+        res.json({ success: true, ...result });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};

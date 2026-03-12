@@ -16,8 +16,11 @@ exports.getAllOrders = async (req, res) => {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
+        const status = req.query.status;
+        const paymentStatus = req.query.paymentStatus;
+        const type = req.query.type;
 
-        const result = await orderService.getAllOrders({ limit, offset });
+        const result = await orderService.getAllOrders({ limit, offset, status, paymentStatus, type });
         res.status(200).json({
             success: true,
             data: result.orders,
@@ -72,8 +75,8 @@ exports.getOrderById = async (req, res) => {
 exports.updateOrderStatus = async (req, res) => {
     try {
         const { id } = req.params;
-        const { status } = req.body;
-        const order = await orderService.updateOrderStatus(id, status);
+        const { status, cancelReason } = req.body;
+        const order = await orderService.updateOrderStatus(id, status, cancelReason);
         res.status(200).json({ success: true, data: order });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

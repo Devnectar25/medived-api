@@ -168,20 +168,44 @@ exports.createOrder = async (orderData) => {
 };
 
 exports.getAllOrders = async (options = {}) => {
-    const { limit = 10, offset = 0 } = options;
+    const { limit = 10, offset = 0, status, paymentStatus } = options;
 
-    // Hide online orders that are still pending payment (not yet successful)
-    // Use json_agg to avoid N+1 query problem and improve performance
-    // Also fetch the total count in the same query context if possible, or separately
+    let baseQuery = `FROM orders o LEFT JOIN user_addresses a ON o.address_id = a.id LEFT JOIN users u ON o.user_id = u.username WHERE 1=1`;
+    const { type = 'successful' } = options;
 
-    const countResult = await pool.query(
-        `SELECT COUNT(*) FROM orders 
-         WHERE payment_method = 'cod' OR payment_status != 'Pending'`
-    );
+    if (type === 'successful') {
+        baseQuery += ` AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')`;
+    } else if (type === 'potential') {
+        baseQuery += ` AND (o.payment_method != 'cod' AND o.payment_status = 'Pending')`;
+    }
+    // 'all' includes both successful and potential (DRAFTs/ABANDONED)
+
+    const params = [];
+    let paramIndex = 1;
+
+    if (status && status !== 'all') {
+        if (status === 'Cancelled') {
+            baseQuery += ` AND o.status IN ('Cancelled', 'Returned', 'Refunded')`;
+        } else {
+            baseQuery += ` AND o.status = $${paramIndex}`;
+            params.push(status);
+            paramIndex++;
+        }
+    }
+
+    if (paymentStatus && paymentStatus !== 'all') {
+        baseQuery += ` AND o.payment_status = $${paramIndex}`;
+        params.push(paymentStatus);
+        paramIndex++;
+    }
+
+    const countResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, params);
     const totalCount = parseInt(countResult.rows[0].count);
 
+    const queryParams = [...params, limit, offset];
+
     const orderResult = await pool.query(
-        `SELECT o.*, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+        `SELECT o.*, u.emailid as customer_email, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
@@ -190,12 +214,10 @@ exports.getAllOrders = async (options = {}) => {
                      ) items_data
                     ), '[]'
                 ) as items
-         FROM orders o
-         LEFT JOIN user_addresses a ON o.address_id = a.id
-         WHERE o.payment_method = 'cod' OR o.payment_status != 'Pending'
+         ${baseQuery}
          ORDER BY o.created_at DESC
-         LIMIT $1 OFFSET $2`,
-        [limit, offset]
+         LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+        queryParams
     );
 
     return {
@@ -251,28 +273,37 @@ exports.getOrderById = async (orderId) => {
 };
 
 exports.getOrderStats = async () => {
+    // Metric logic:
+    // Successful = COD (any status) OR Non-COD with payment processed (Paid/Completed)
+    // Potential = Non-COD with payment NOT processed (Pending) — basically abandoned session
     const result = await pool.query(
         `SELECT 
-            COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status = 'Pending') as pending,
-            COUNT(*) FILTER (WHERE status = 'Processing') as processing,
-            COUNT(*) FILTER (WHERE status = 'Delivered') as delivered,
-            COUNT(*) FILTER (WHERE payment_status = 'Pending') as pending_payment
-         FROM orders
-         WHERE payment_method = 'cod' OR payment_status != 'Pending'`
+            COUNT(*) FILTER (WHERE payment_method = 'cod' OR payment_status != 'Pending') as total,
+            COUNT(*) FILTER (WHERE payment_method != 'cod' AND payment_status = 'Pending') as potential_users,
+            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status NOT IN ('Cancelled', 'Returned', 'Refunded')) as active,
+            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Pending') as pending,
+            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Processing') as processing,
+            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Delivered') as delivered,
+            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status IN ('Cancelled', 'Returned', 'Refunded')) as canceled,
+            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND payment_status = 'Pending') as pending_payment
+         FROM orders`
     );
 
     const stats = result.rows[0];
     return {
         total: parseInt(stats.total),
+        potentialUsers: parseInt(stats.potential_users),
+        active: parseInt(stats.active),
         pending: parseInt(stats.pending),
         processing: parseInt(stats.processing),
         delivered: parseInt(stats.delivered),
-        pendingPayment: parseInt(stats.pending_payment)
+        canceled: parseInt(stats.canceled),
+        pendingPayment: parseInt(stats.pending_payment),
+        allRecordsCount: parseInt(stats.total) + parseInt(stats.potential_users) // total rows in DB
     };
 };
 
-exports.updateOrderStatus = async (orderId, status) => {
+exports.updateOrderStatus = async (orderId, status, cancelReason = null) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -284,10 +315,18 @@ exports.updateOrderStatus = async (orderId, status) => {
         const oldStatus = currentOrderRes.rows[0].status;
 
         // Update status
-        const updateResult = await client.query(
-            `UPDATE orders SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING *`,
-            [orderId, status]
-        );
+        let updateQuery;
+        let updateParams;
+
+        if (status === 'Cancelled' && oldStatus !== 'Cancelled') {
+            updateQuery = `UPDATE orders SET status = $2, cancel_reason = $3, original_status = $4, cancelled_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
+            updateParams = [orderId, status, cancelReason || 'Admin Action', oldStatus];
+        } else {
+            updateQuery = `UPDATE orders SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING *`;
+            updateParams = [orderId, status];
+        }
+
+        const updateResult = await client.query(updateQuery, updateParams);
 
         const order = updateResult.rows[0];
 
