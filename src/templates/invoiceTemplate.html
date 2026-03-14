@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; color: #2d3436; margin: 0; padding: 30px; }
+        .invoice-wrapper { border: 1px solid #f1f2f6; padding: 40px; border-radius: 8px; }
+        
+        /* Header */
+        .invoice-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; position: relative; }
+        .title { font-size: 28px; font-weight: 700; color: #1e272e; margin: 0; }
+        .meta { font-size: 12px; color: #7f8c8d; margin-top: 5px; display: flex; gap: 30px; }
+        .logo-container { text-align: right; flex-shrink: 0; }
+        .logo-container img { max-height: 55px; width: auto; display: block; margin-left: auto; }
+        
+        /* Info Grid */
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin: 40px 0; font-size: 13px; line-height: 1.5; }
+        .label { font-weight: bold; color: #2d3436; font-size: 10px; text-transform: uppercase; margin-bottom: 5px; display: block; }
+        
+        /* Product Table */
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th { text-align: left; font-size: 11px; color: #7f8c8d; border-bottom: 1px solid #dfe6e9; padding: 10px 0; }
+        td { padding: 12px 0; border-bottom: 1px solid #f1f2f6; font-size: 13px; }
+        .text-right { text-align: right; }
+
+        /* Totals */
+        .summary-container { display: flex; justify-content: flex-end; margin-top: 30px; }
+        .summary-table { width: 220px; font-size: 13px; }
+        .grand-total { font-size: 16px; font-weight: bold; color: #26B5AD; }
+
+        /* Footer */
+        .footer-grid { display: grid; grid-template-columns: 1.5fr 1fr; gap: 40px; margin-top: 50px; padding-top: 20px; border-top: 1px solid #eee; }
+        .bank-info { background: #f9fbfb; padding: 15px; border-radius: 5px; font-size: 12px; border-left: 3px solid #26B5AD; }
+    </style>
+</head>
+<body>
+    <div class="invoice-wrapper">
+        <div class="invoice-header">
+            <div>
+                <h1 class="title">Invoice</h1>
+                <div class="meta">
+                    <span><span class="label">Invoice No:</span> #{{orderId}}</span>
+                    <span><span class="label">Date:</span> {{issueDate}}</span>
+                </div>
+            </div>
+            {{#if logoBase64}}
+            <div class="logo-container">
+                <img src="{{logoBase64}}" alt="Logo">
+            </div>
+            {{/if}}
+        </div>
+
+        <div class="info-grid">
+            <div>
+                <span class="label">Billed To</span>
+                {{userName}}<br>{{userAddress}}<br>{{userPhone}}
+            </div>
+            <div>
+                <span class="label">From</span>
+                HOMVED Industries<br>123 Wellness St, Pune<br>Maharashtra, India
+            </div>
+            <div class="text-right">
+                <span class="label">Contact</span>
+                support@homved.com<br>www.homved.com
+            </div>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Description</th>
+                    <th class="text-right">Unit Cost</th>
+                    <th class="text-right">Qty</th>
+                    <th class="text-right">Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{#each items}}
+                <tr>
+                    <td>{{this.name}}</td>
+                    <td class="text-right">{{currencySymbol}}{{this.price}}</td>
+                    <td class="text-right">{{this.quantity}}</td>
+                    <td class="text-right">{{currencySymbol}}{{this.total}}</td>
+                </tr>
+                {{/each}}
+            </tbody>
+        </table>
+
+        <div class="summary-container">
+            <table class="summary-table">
+                <tr><td>Subtotal</td><td class="text-right">{{currencySymbol}}{{subtotal}}</td></tr>
+                {{#if hasDiscount}}
+                <tr style="color: #26B5AD;">
+                    <td>
+                        <strong>Discount ({{discount}}%)</strong><br>
+                        <span style="color: #7f8c8d; font-size: 10px;">Applied coupon: {{couponCode}}</span>
+                    </td>
+                    <td class="text-right">-{{currencySymbol}}{{discountAmount}}</td>
+                </tr>
+                {{/if}}
+                <tr><td>Shipping</td><td class="text-right">{{currencySymbol}}{{shippingFee}}</td></tr>
+                <tr><td>Tax ({{taxRate}}%)</td><td class="text-right">{{currencySymbol}}{{taxAmount}}</td></tr>
+                <tr class="grand-total"><td>Total Amount</td><td class="text-right">{{currencySymbol}}{{grandTotal}}</td></tr>
+            </table>
+        </div>
+
+        <div class="footer-grid">
+            <div class="bank-info">
+                <span class="label">Bank Details</span>
+                A/C Holder: HOMVED INDUSTRIES<br>
+                A/C No: 208417367600<br>
+                IFSC: HDFC0001234
+            </div>
+            <div class="terms">
+                <span class="label">Terms</span>
+                Invoice payable within 7 days. Thank you for your trust.
+            </div>
+        </div>
+    </div>
+</body>
+</html>

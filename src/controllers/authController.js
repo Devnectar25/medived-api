@@ -45,6 +45,21 @@ exports.verifyOtp = async (req, res) => {
     }
 };
 
+exports.resendOtp = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email is required' });
+        }
+
+        const result = await authService.resendOtp(email);
+        res.json({ success: true, ...result });
+    } catch (error) {
+        console.error('[resendOtp] Error:', error.message);
+        res.status(400).json({ success: false, message: error.message });
+    }
+};
+
 exports.adminLogin = async (req, res) => {
     try {
         const { username, password } = req.body;

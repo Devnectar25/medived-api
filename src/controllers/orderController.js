@@ -1,4 +1,5 @@
 const orderService = require('../services/orderService');
+const invoiceService = require('../services/invoiceService');
 
 exports.createOrder = async (req, res) => {
     try {
@@ -80,5 +81,31 @@ exports.updateOrderStatus = async (req, res) => {
         res.status(200).json({ success: true, data: order });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+exports.downloadInvoice = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const order = await orderService.getOrderById(id);
+        if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+
+        // Security check: only allow own user or admin
+        if (order.user_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ success: false, message: 'Not authorized' });
+        }
+
+        const pdfBuffer = await invoiceService.generateInvoicePDF(id);
+        
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="HOMVED_INV_${order.order_number}.pdf"`);
+        res.setHeader('Content-Length', pdfBuffer.length);
+        
+        res.end(pdfBuffer);
+    } catch (error) {
+        console.error('Invoice Error:', error);
+        if (!res.headersSent) {
+            res.status(500).json({ success: false, message: error.message });
+        }
     }
 };

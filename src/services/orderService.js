@@ -12,6 +12,8 @@ exports.createOrder = async (orderData) => {
             couponCode,   // optional — sent from Checkout.tsx when user applied a coupon
             cartItemIds
         } = orderData;
+        console.log(`[OrderService] Starting order creation for user: ${userId}, Order #: ${orderNumber}`);
+        console.log(`[OrderService] Order items count: ${items?.length}, Cart item IDs: ${JSON.stringify(cartItemIds)}`);
         // subtotal from client is received but intentionally never used in computation — dbSubtotal below is used instead
 
         // ── PRE-STEP: Always re-fetch real prices from DB ──────────────────────
@@ -26,7 +28,7 @@ exports.createOrder = async (orderData) => {
                 p.category_id,
                 p.brand   AS brand_id
              FROM cart_items ci
-             JOIN products p ON ci.product_id = p.product_id
+             JOIN products p ON ci.product_id::text = p.product_id::text
              WHERE ci.user_id = $1`;
         let cartParams = [userId];
 
@@ -36,6 +38,7 @@ exports.createOrder = async (orderData) => {
         }
 
         const cartResult = await client.query(cartQuery, cartParams);
+        console.log(`[OrderService] Cart fetch result: ${cartResult.rows.length} rows`);
         const dbCartItems = cartResult.rows.map(row => ({
             ...row,
             price: parseFloat(row.price),
@@ -47,6 +50,7 @@ exports.createOrder = async (orderData) => {
             (sum, item) => sum + (item.price * item.quantity),
             0
         );
+        console.log(`[OrderService] DB Subtotal computed: ${dbSubtotal}`);
 
         // ── STEP 1: Coupon validation (server-side, inside transaction) ────────
         // We never trust the client's `total`. We always recompute here.
@@ -106,6 +110,7 @@ exports.createOrder = async (orderData) => {
         );
 
         const order = orderResult.rows[0];
+        console.log(`[OrderService] Order inserted successfully: ID ${order.id}`);
 
         // ── STEP 3: Mark coupon assignment as used ─────────────────────────────
         // Only runs if a valid coupon was applied. Silently skips if the coupon
@@ -142,7 +147,7 @@ exports.createOrder = async (orderData) => {
 
             if (stockUpdateResult.rows[0]?.stock_quantity === 0) {
                 await client.query(
-                    `UPDATE products SET instock = false WHERE product_id = $1`,
+                    `UPDATE products SET instock = false WHERE product_id = $1::text`,
                     [item.id || item.productId]
                 );
             }
@@ -342,7 +347,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null) => {
                          quantity = quantity + $2,
                          instock = true,
                          updated_at = NOW()
-                     WHERE product_id = $1
+                     WHERE product_id = $1::text
                      RETURNING stock_quantity, quantity`,
                     [item.product_id, item.quantity]
                 );
