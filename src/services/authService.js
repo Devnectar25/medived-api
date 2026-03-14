@@ -174,6 +174,34 @@ exports.verifyOtp = async (email, otp) => {
     };
 };
 
+exports.resendOtp = async (email) => {
+    console.log(`[resendOtp Service] Resending OTP for email: ${email}`);
+    
+    // Check if there is an existing record to resend for
+    const existingRecord = otpStore.get(email);
+    
+    const otp = generateOTP();
+    console.log(`[resendOtp Service] New OTP for ${email}: ${otp}`);
+
+    if (existingRecord) {
+        // Update existing record with new OTP and refreshed expiry
+        existingRecord.otp = otp;
+        existingRecord.expires = Date.now() + 5 * 60 * 1000;
+        otpStore.set(email, existingRecord);
+    } else {
+        // If no record exists, we might need to look up the user to allow "resend" to work as "send"
+        // But usually resend implies they just tried to login/register.
+        // For security, we only resend if a session was recently initiated.
+        throw new Error("No active verification session found. Please try logging in again.");
+    }
+
+    return {
+        success: true,
+        email,
+        otp
+    };
+};
+
 // --- ADMIN AUTH ---
 
 exports.loginAdmin = async (username, password) => {
