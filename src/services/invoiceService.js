@@ -1,7 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const handlebars = require('handlebars');
-const puppeteer = require('puppeteer');
+// const puppeteer = require('puppeteer'); // Commented out for Vercel fix
+const puppeteer = require('puppeteer-core');
+const chromium = require('@sparticuz/chromium');
 const orderService = require('./orderService');
 const pool = require('../config/db');
 
@@ -136,13 +138,26 @@ exports.generateInvoiceHTML = async (orderId) => {
 exports.generateInvoicePDF = async (orderId) => {
     const html = await exports.generateInvoiceHTML(orderId);
     
-    // Launch puppeteer to render the HTML into a PDF
+    /* 
+    // OLD CODE - FAILS ON VERCEL
     const browser = await puppeteer.launch({
         headless: 'new',
         args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
-    
+    */
+
+    // NEW CODE - VERCEL COMPATIBLE
+    let browser;
     try {
+        const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL;
+        
+        browser = await puppeteer.launch({
+            args: isProd ? chromium.args : ['--no-sandbox', '--disable-setuid-sandbox'],
+            defaultViewport: chromium.defaultViewport,
+            executablePath: isProd ? await chromium.executablePath() : 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', // Fallback for local
+            headless: isProd ? chromium.headless : 'new',
+        });
+
         const page = await browser.newPage();
         
         // Set the HTML content
@@ -161,7 +176,11 @@ exports.generateInvoicePDF = async (orderId) => {
         });
 
         return pdfBuffer;
+    } catch (error) {
+        console.error('PDF Generation Error:', error);
+        throw error;
     } finally {
-        await browser.close();
+        if (browser) await browser.close();
     }
 };
+
