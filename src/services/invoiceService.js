@@ -59,10 +59,11 @@ exports.generateInvoiceHTML = async (orderId) => {
     // 4. Load the logo and convert to base64
     let logoBase64 = '';
     const possibleLogoPaths = [
-        "C:\\workspace\\homved\\reactshop-home\\src\\assets\\Logo - Copy.png",
-        "C:\\workspace\\homved\\reactshop-home\\src\\assets\\Logo.png",
-        path.join(__dirname, "../../../reactshop-home/src/assets/Logo - Copy.png"),
-        path.join(__dirname, "../../../reactshop-home/src/assets/Logo.png")
+        path.join(__dirname, "../assets/Logo.png"),
+        path.join(__dirname, "../assets/Logo - Copy.png"),
+        // Keeping these as fallback for local if needed, though the above should work now
+        path.join(__dirname, "../../../reactshop-home/src/assets/Logo.png"),
+        path.join(__dirname, "../../../reactshop-home/src/assets/Logo - Copy.png")
     ];
 
     for (const logoPath of possibleLogoPaths) {
