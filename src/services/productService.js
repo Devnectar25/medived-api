@@ -112,7 +112,7 @@ exports.getProductById = async (id) => {
          LEFT JOIN category c ON p.category_id = c.category_id 
          LEFT JOIN brand b ON p.brand = b.brand_id
          LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
-         WHERE p.product_id = $1`,
+         WHERE p.product_id = $1::integer`,
         [id]
     );
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
@@ -155,7 +155,7 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
         LEFT JOIN category c ON p.category_id = c.category_id
         LEFT JOIN brand b ON p.brand = b.brand_id
         LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
-        WHERE p.product_id != $1 AND p.active = true
+        WHERE p.product_id != $1::integer AND p.active = true
     `;
     const params = [productId];
 
@@ -225,7 +225,7 @@ exports.updateProduct = async (id, product) => {
     } = product;
 
     // 1. Get current product to check for removed images
-    const currentRes = await pool.query("SELECT product_images FROM products WHERE product_id = $1", [id]);
+    const currentRes = await pool.query("SELECT product_images FROM products WHERE product_id = $1::integer", [id]);
     const currentImages = currentRes.rows[0]?.product_images || [];
 
     // 2. Identify removed images
@@ -253,7 +253,7 @@ exports.updateProduct = async (id, product) => {
             expiryinfo = $20, subcategory_id = $21, specifications = $22,
             active = COALESCE($23, active),
             updated_at = NOW()
-        WHERE product_id = $1 
+        WHERE product_id = $1::integer 
         RETURNING *`,
         [id, productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, supports, images, expiryinfo, subcategory_id, specifications, active]
     );
@@ -262,7 +262,7 @@ exports.updateProduct = async (id, product) => {
 
 exports.deleteProduct = async (id) => {
     // 1. Get product to find image folder
-    const currentRes = await pool.query("SELECT product_images, image FROM products WHERE product_id = $1", [id]);
+    const currentRes = await pool.query("SELECT product_images, image FROM products WHERE product_id = $1::integer", [id]);
     const product = currentRes.rows[0];
 
     if (product) {
@@ -286,7 +286,7 @@ exports.deleteProduct = async (id) => {
         }
     }
 
-    const result = await pool.query("DELETE FROM products WHERE product_id = $1 RETURNING *", [id]);
+    const result = await pool.query("DELETE FROM products WHERE product_id = $1::integer RETURNING *", [id]);
     return result.rows[0];
 };
 
@@ -294,7 +294,7 @@ exports.toggleProductStatus = async (id) => {
     const result = await pool.query(`
         UPDATE products 
         SET active = NOT active, updated_at = NOW() 
-        WHERE product_id = $1 
+        WHERE product_id = $1::integer 
         RETURNING *
     `, [id]);
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
