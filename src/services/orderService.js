@@ -33,7 +33,7 @@ exports.createOrder = async (orderData) => {
         let cartParams = [userId];
 
         if (cartItemIds && cartItemIds.length > 0) {
-            cartQuery += ` AND ci.product_id = ANY($2)`;
+            cartQuery += ` AND ci.product_id::integer = ANY($2::integer[])`;
             cartParams.push(cartItemIds);
         }
 
@@ -140,14 +140,14 @@ exports.createOrder = async (orderData) => {
                  SET stock_quantity = GREATEST(0, stock_quantity - $2),
                      quantity       = GREATEST(0, quantity - $2),
                      updated_at     = NOW()
-                 WHERE product_id = $1
+                 WHERE product_id = $1::integer
                  RETURNING stock_quantity`,
                 [item.id || item.productId, item.quantity]
             );
 
             if (stockUpdateResult.rows[0]?.stock_quantity === 0) {
                 await client.query(
-                    `UPDATE products SET instock = false WHERE product_id = $1::text`,
+                    `UPDATE products SET instock = false WHERE product_id = $1::integer`,
                     [item.id || item.productId]
                 );
             }
@@ -155,7 +155,7 @@ exports.createOrder = async (orderData) => {
 
         // ── STEP 5: Clear cart ─────────────────────────────────────────────────
         if (cartItemIds && cartItemIds.length > 0) {
-            await client.query(`DELETE FROM cart_items WHERE user_id = $1 AND product_id = ANY($2)`, [userId, cartItemIds]);
+            await client.query(`DELETE FROM cart_items WHERE user_id = $1 AND product_id::integer = ANY($2::integer[])`, [userId, cartItemIds]);
         } else {
             await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [userId]);
         }
@@ -347,7 +347,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null) => {
                          quantity = quantity + $2,
                          instock = true,
                          updated_at = NOW()
-                     WHERE product_id = $1::text
+                     WHERE product_id = $1::integer
                      RETURNING stock_quantity, quantity`,
                     [item.product_id, item.quantity]
                 );

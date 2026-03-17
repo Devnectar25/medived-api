@@ -2,7 +2,7 @@ const pool = require('../config/db');
 
 exports.addToWishlist = async (userId, productId) => {
     const result = await pool.query(
-        'INSERT INTO wishlist (user_id, product_id) VALUES ($1, $2) ON CONFLICT (user_id, product_id) DO NOTHING RETURNING *',
+        'INSERT INTO wishlist (user_id, product_id) VALUES ($1, $2::integer) ON CONFLICT (user_id, product_id) DO NOTHING RETURNING *',
         [userId, productId]
     );
     return result.rows[0];
@@ -31,7 +31,7 @@ exports.getWishlistByUser = async (userId) => {
 
 exports.removeFromWishlist = async (userId, productId) => {
     const result = await pool.query(
-        'DELETE FROM wishlist WHERE user_id = $1 AND product_id = $2 RETURNING *',
+        'DELETE FROM wishlist WHERE user_id = $1 AND product_id = $2::integer RETURNING *',
         [userId, productId]
     );
     return result.rows[0];
@@ -47,19 +47,19 @@ exports.getWishlistCount = async (userId) => {
 
 exports.toggleWishlist = async (userId, productId) => {
     const checkResult = await pool.query(
-        'SELECT * FROM wishlist WHERE user_id = $1 AND product_id = $2',
+        'SELECT * FROM wishlist WHERE user_id = $1 AND product_id = $2::integer',
         [userId, productId]
     );
 
     if (checkResult.rows.length > 0) {
         await pool.query(
-            'DELETE FROM wishlist WHERE user_id = $1 AND product_id = $2',
+            'DELETE FROM wishlist WHERE user_id = $1 AND product_id = $2::integer',
             [userId, productId]
         );
         return { added: false };
     } else {
         await pool.query(
-            'INSERT INTO wishlist (user_id, product_id) VALUES ($1, $2)',
+            'INSERT INTO wishlist (user_id, product_id) VALUES ($1, $2::integer)',
             [userId, productId]
         );
         return { added: true };
