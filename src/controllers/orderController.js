@@ -77,8 +77,36 @@ exports.updateOrderStatus = async (req, res) => {
     try {
         const { id } = req.params;
         const { status, cancelReason } = req.body;
-        const order = await orderService.updateOrderStatus(id, status, cancelReason);
-        res.status(200).json({ success: true, data: order });
+
+        const order = await orderService.getOrderById(id);
+        if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+
+        // Security check
+        const isAdmin = req.user.role === 'admin';
+        const isOwner = order.user_id == req.user.id;
+
+        if (!isAdmin) {
+            if (!isOwner) {
+                return res.status(403).json({ success: false, message: 'Not authorized' });
+            }
+            if (status !== 'Cancelled') {
+                return res.status(403).json({ success: false, message: 'Regular users can only cancel orders' });
+            }
+            // Enforce 24h limit for non-admins
+            const createdTime = new Date(order.created_at).getTime();
+            if (Date.now() - createdTime > 24 * 60 * 60 * 1000) {
+                return res.status(400).json({ success: false, message: 'Order can only be cancelled within 24 hours of placement' });
+            }
+            // Cancellable statuses matches frontend UI logic
+            const cancellableStatuses = ['Pending', 'Confirmed', 'Processing'];
+            const orderStatus = order.status || 'Pending';
+            if (!cancellableStatuses.includes(orderStatus) && orderStatus.toLowerCase() !== 'pending') {
+                return res.status(400).json({ success: false, message: `Order with status'${orderStatus}' cannot be cancelled` });
+            }
+        }
+
+        const updatedOrder = await orderService.updateOrderStatus(id, status, cancelReason);
+        res.status(200).json({ success: true, data: updatedOrder });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }

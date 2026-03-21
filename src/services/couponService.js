@@ -336,21 +336,31 @@ exports.validateCoupon = async (code, orderTotal, cartItems = [], userId = null)
         } else if (coupon.discount_type === 'fixed') {
             discountAmount = Math.min(parseFloat(coupon.discount_value), applicableTotal);
         } else if (coupon.discount_type === 'bogo') {
-            const totalEligibleCount = eligibleItems.reduce((sum, item) => sum + parseInt(item.quantity || 1, 10), 0);
-            if (totalEligibleCount >= 1) {
-                const sorted = [...eligibleItems].sort((a, b) => parseFloat(a.price) - parseFloat(b.price));
-
-                if (totalEligibleCount === 1) {
-                    bogoAutoAdd = true;
-                    bogoItemId = sorted[0].id || sorted[0].product_id;
-                    bogoItemName = sorted[0].name || sorted[0].productname;
-                    discountAmount = parseFloat(sorted[0].price); // Now calculate discount since cart will be +1 updated
+            // HOM-128: Refined BOGO logic - Buy 1 (or more), Get 1 Free
+            // The discount only triggers if an eligible item has quantity >= 2.
+            // The discount is exactly ONE unit price of that item.
+            
+            const itemsWithQty2 = eligibleItems.filter(item => parseInt(item.quantity || 1, 10) >= 2);
+            
+            if (itemsWithQty2.length === 0) {
+                if (eligibleItems.length > 0) {
+                    throw new Error('This BOGO coupon requires at least 2 units of an eligible product in your cart.');
                 } else {
-                    discountAmount = parseFloat(sorted[0].price);
+                    // This case is actually caught by the scope validation above, but kept for robustness
+                    throw new Error(`This BOGO coupon only applies to specific ${coupon.apply_to}s not present in your cart.`);
                 }
-            } else {
-                discountAmount = 0;
             }
+            
+            // If multiple eligible products have qty >= 2, we pick the highest priced one for the discount.
+            const maxPriceItem = itemsWithQty2.reduce((prev, current) => {
+                return (parseFloat(prev.price) > parseFloat(current.price)) ? prev : current;
+            }, itemsWithQty2[0]);
+            
+            discountAmount = parseFloat(maxPriceItem.price);
+            
+            // Result fields for frontend display
+            bogoItemId = maxPriceItem.id || maxPriceItem.product_id;
+            bogoItemName = maxPriceItem.name || maxPriceItem.productname;
         }
 
         if (discountAmount > parsedTotal) discountAmount = parsedTotal;

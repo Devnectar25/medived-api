@@ -107,6 +107,9 @@ exports.generateInvoiceHTML = async (orderId) => {
         hasDiscount: discountAmount > 0,
         couponCode: order.coupon_code || '',
         discount: (discountAmount > 0 && subtotal > 0) ? ((discountAmount / subtotal) * 100).toFixed(0) : 0,
+        discountLabel: (order.coupon_code && (order.coupon_code.toUpperCase().includes('BOGO') || order.coupon_code.toUpperCase().includes('FREE'))) 
+            ? `BOGO Offer Applied`
+            : `Discount (${(discountAmount > 0 && subtotal > 0) ? ((discountAmount / subtotal) * 100).toFixed(0) : 0}%)`,
         discountAmount: discountAmount.toFixed(2),
         taxRate: taxRate,
         taxAmount: (total - subtotal - parseFloat(order.shipping || 0) + discountAmount).toFixed(2),

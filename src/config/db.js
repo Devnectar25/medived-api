@@ -1,5 +1,10 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
 require('dotenv').config({ override: true });
+
+// Force TIMESTAMP (oid 1114) to be parsed as UTC to avoid local timezone offset shifts
+types.setTypeParser(1114, (val) => {
+    return val ? new Date(val + 'Z') : null;
+});
 
 
 const pool = new Pool({
