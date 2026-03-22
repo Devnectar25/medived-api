@@ -323,9 +323,12 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null) => {
         let updateQuery;
         let updateParams;
 
-        if (status === 'Cancelled' && oldStatus !== 'Cancelled') {
-            updateQuery = `UPDATE orders SET status = $2, cancel_reason = $3, original_status = $4, cancelled_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
+        if (status === 'Cancelled') {
+            updateQuery = `UPDATE orders SET status = $2, cancel_reason = $3, original_status = COALESCE(original_status, $4), cancelled_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
             updateParams = [orderId, status, cancelReason || 'Admin Action', oldStatus];
+        } else if (status === 'Delivered' && oldStatus !== 'Delivered') {
+            updateQuery = `UPDATE orders SET status = $2, delivered_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
+            updateParams = [orderId, status];
         } else {
             updateQuery = `UPDATE orders SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING *`;
             updateParams = [orderId, status];
