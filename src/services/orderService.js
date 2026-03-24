@@ -367,3 +367,69 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null) => {
         client.release();
     }
 };
+
+exports.reorderOrder = async (orderId, userId) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // 1. Fetch order items and current product stock/price
+        const orderItemsResult = await client.query(
+            `SELECT oi.product_id, oi.quantity as order_quantity, p.stock_quantity, p.instock, p.productname as name 
+             FROM order_items oi
+             JOIN products p ON oi.product_id::text = p.product_id::text
+             WHERE oi.order_id = $1`,
+            [orderId]
+        );
+
+        if (orderItemsResult.rows.length === 0) {
+            throw new Error('Order not found or has no items');
+        }
+
+        const items = orderItemsResult.rows;
+        let addedCount = 0;
+        let failedCount = 0;
+        const failedItems = [];
+        const addedProductIds = [];
+
+        // 2. Add each available item to cart
+        for (const item of items) {
+            console.log(`[ReorderService] Processing item ${item.product_id} with status: ${item.instock}, stock: ${item.stock_quantity}`);
+            if (item.instock && item.stock_quantity > 0) {
+                // Requirement: Standardize Reorder Quantity to Single Unit (1)
+                // Also: Reset quantity to 1 if already in cart (Option B)
+                // Use ::integer casts to ensure conflict matching works regardless of parameter types
+                await client.query(
+                    `INSERT INTO cart_items (user_id, product_id, quantity, updated_at)
+                     VALUES ($1, $2::integer, 1, NOW())
+                     ON CONFLICT (user_id, product_id)
+                     DO UPDATE SET 
+                        quantity = 1, 
+                        updated_at = NOW()`,
+                    [userId, item.product_id]
+                );
+                addedCount++;
+                addedProductIds.push(String(item.product_id));
+            } else {
+                failedCount++;
+                failedItems.push(item.name);
+            }
+        }
+
+        await client.query('COMMIT');
+        
+        return {
+            success: true,
+            added: addedCount,
+            failed: failedCount,
+            failedItems: failedItems,
+            addedProductIds: addedProductIds
+        };
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};

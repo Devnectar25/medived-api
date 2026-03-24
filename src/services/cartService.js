@@ -42,18 +42,19 @@ exports.getCart = async (userId) => {
     }));
 };
 
-exports.addToCart = async (userId, productId, quantity) => {
-    // HOM-129: Cap quantity at available stock
+exports.addToCart = async (userId, productId, quantity, setMode = false) => {
+    // HOM-11: If setMode is true, we reset the quantity to exactly 'quantity' (usually 1)
+    // instead of incrementing. This supports modern Reorder and Buy Now behaviors.
     const result = await pool.query(
         `INSERT INTO cart_items (user_id, product_id, quantity, updated_at)
-         SELECT $1, $2, LEAST($3, p.stock_quantity), NOW()
+         SELECT $1, $2, $3, NOW()
          FROM products p WHERE p.product_id = $2
          ON CONFLICT (user_id, product_id)
          DO UPDATE SET 
-            quantity = LEAST(cart_items.quantity + EXCLUDED.quantity, (SELECT stock_quantity FROM products WHERE product_id = cart_items.product_id)), 
+            quantity = CASE WHEN $4 THEN EXCLUDED.quantity ELSE (SELECT LEAST(cart_items.quantity + EXCLUDED.quantity, p2.stock_quantity) FROM products p2 WHERE p2.product_id = cart_items.product_id) END, 
             updated_at = NOW()
          RETURNING *`,
-        [userId, productId, quantity]
+        [userId, productId, quantity, setMode]
     );
     return result.rows[0];
 };

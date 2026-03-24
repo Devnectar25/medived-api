@@ -7,6 +7,7 @@ router.use(protect);
 
 router.get('/', cartController.getCart);
 router.post('/add', cartController.addToCart);
+router.post('/instant', cartController.instantCheckout);
 router.patch('/update', cartController.updateQuantity);
 router.delete('/item/:productId', cartController.removeFromCart);
 router.delete('/clear', cartController.clearCart);
