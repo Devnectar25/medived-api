@@ -117,6 +117,7 @@ app.use('/api/addresses', require('./routes/addressRoutes'));
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/cart', require('./routes/cartRoutes'));
 app.use('/api/orders', require('./routes/orderRoutes'));
+app.use('/api', require('./routes/reorderRoutes')); // Exact match for reorder endpoints
 app.use('/api', require('./routes/couponRoutes'));
 app.use("/api/admin/analytics", adminAnalyticsRoutes);
 app.use('/api/contact', require('./routes/contactRoutes'));

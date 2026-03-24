@@ -13,11 +13,26 @@ exports.getCart = async (req, res) => {
 exports.addToCart = async (req, res) => {
     try {
         const userId = req.user.id;
+        const { productId, quantity, setMode } = req.body;
+        if (!productId) {
+            return res.status(400).json({ success: false, message: 'Product ID is required' });
+        }
+        const item = await cartService.addToCart(userId, productId, quantity || 1, !!setMode);
+        res.status(200).json({ success: true, data: item });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+exports.instantCheckout = async (req, res) => {
+    try {
+        const userId = req.user.id;
         const { productId, quantity } = req.body;
         if (!productId) {
             return res.status(400).json({ success: false, message: 'Product ID is required' });
         }
-        const item = await cartService.addToCart(userId, productId, quantity || 1);
+        // HOM-11: Instant checkout now uses setMode: true to ensure quantity is exactly 'quantity' (usually 1)
+        const item = await cartService.addToCart(userId, productId, quantity || 1, true);
         res.status(200).json({ success: true, data: item });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

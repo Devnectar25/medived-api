@@ -137,3 +137,30 @@ exports.downloadInvoice = async (req, res) => {
         }
     }
 };
+
+exports.reorderOrder = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { orderId } = req.body;
+        const targetId = id || orderId;
+        const userId = req.user.id;
+
+        if (!targetId) {
+            return res.status(400).json({ success: false, message: 'Order ID is required' });
+        }
+
+        // Security check: only allow own user or admin
+        const order = await orderService.getOrderById(targetId);
+        if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+
+        if (order.user_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ success: false, message: 'Not authorized to reorder this order' });
+        }
+
+        const result = await orderService.reorderOrder(targetId, userId);
+        res.status(200).json(result);
+    } catch (error) {
+        console.error('Reorder Error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
