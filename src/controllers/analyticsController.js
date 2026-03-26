@@ -127,6 +127,9 @@ async function getAnalyticsDrilldown(req, res) {
       case 'top_products':
         data = await analyticsService.getTopProducts(period || '7d', 50, sortBy || 'revenue');
         break;
+      case 'potential_users':
+        data = await analyticsService.getPotentialUsers(period || '7d', 100);
+        break;
       case 'top_categories':
         data = await analyticsService.getTopCategories(period || '7d', 50, sortBy || 'revenue');
         break;

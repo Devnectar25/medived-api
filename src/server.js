@@ -31,7 +31,7 @@ const PORT = process.env.PORT || 4000;
 // Only start the server if we're not running as a module (e.g., on Vercel)
 // Vercel imports the app and handles the listen part itself.
 if (require.main === module) {
-    const server = app.listen(PORT, '0.0.0.0', () => {
+    const server = app.listen(PORT, () => {
         console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
     }).on('error', (err) => {
         console.error('❌ Server startup error:', err);
