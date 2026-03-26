@@ -210,7 +210,7 @@ exports.getAllOrders = async (options = {}) => {
     const queryParams = [...params, limit, offset];
 
     const orderResult = await pool.query(
-        `SELECT o.*, u.emailid as customer_email, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
@@ -236,7 +236,7 @@ exports.getAllOrders = async (options = {}) => {
 exports.getOrdersByUser = async (userId) => {
     // Use json_agg to avoid N+1 query problem and improve performance
     const orderResult = await pool.query(
-        `SELECT o.*, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
@@ -247,6 +247,7 @@ exports.getOrdersByUser = async (userId) => {
                 ) as items
          FROM orders o
          LEFT JOIN user_addresses a ON o.address_id = a.id
+         LEFT JOIN users u ON o.user_id = u.username
          WHERE o.user_id = $1 
          ORDER BY o.created_at DESC`,
         [userId]
@@ -257,7 +258,7 @@ exports.getOrdersByUser = async (userId) => {
 
 exports.getOrderById = async (orderId) => {
     const orderResult = await pool.query(
-        `SELECT o.*, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
@@ -268,6 +269,7 @@ exports.getOrderById = async (orderId) => {
                 ) as items
          FROM orders o
          LEFT JOIN user_addresses a ON o.address_id = a.id
+         LEFT JOIN users u ON o.user_id = u.username
          WHERE o.id = $1`,
         [orderId]
     );
@@ -324,11 +326,12 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null) => {
         let updateParams;
 
         if (status === 'Cancelled') {
-            updateQuery = `UPDATE orders SET status = $2, cancel_reason = $3, original_status = COALESCE(original_status, $4), cancelled_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
-            updateParams = [orderId, status, cancelReason || 'Admin Action', oldStatus];
-        } else if (status === 'Delivered' && oldStatus !== 'Delivered') {
-            updateQuery = `UPDATE orders SET status = $2, delivered_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
-            updateParams = [orderId, status];
+            updateQuery = `UPDATE orders SET status = $2, payment_status = $5, cancel_reason = $3, original_status = COALESCE(original_status, $4), cancelled_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
+            updateParams = [orderId, status, cancelReason || 'Admin Action', oldStatus, 'Pending'];
+        } else if (status === 'Delivered') {
+            console.log(`[OrderService] Marking order ${orderId} as Delivered and Paid`);
+            updateQuery = `UPDATE orders SET status = $2, payment_status = $3, delivered_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
+            updateParams = [orderId, status, 'Paid'];
         } else {
             updateQuery = `UPDATE orders SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING *`;
             updateParams = [orderId, status];
@@ -336,7 +339,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null) => {
 
         const updateResult = await client.query(updateQuery, updateParams);
 
-        const order = updateResult.rows[0];
+        // Fetch the full enriched order after update to ensure frontend receives address/email details
+        const order = await exports.getOrderById(orderId);
 
         // If transitioning to Cancelled or Returned from a non-cancelled status, restore stock
         if (['Cancelled', 'Returned'].includes(status) && !['Cancelled', 'Returned'].includes(oldStatus)) {

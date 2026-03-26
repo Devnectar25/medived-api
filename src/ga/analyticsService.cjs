@@ -58,12 +58,12 @@ async function getAdminAnalyticsSummary(period = "7d") {
         [start.toISOString(), end.toISOString()]
       );
 
-      // Potential Users / Abandoned Checkouts
+      // Potential Users / Abandoned Checkouts - Filtered by selected date period
       const potentialUsersRes = await pool.query(
         `SELECT COUNT(*) as count 
          FROM orders 
-         WHERE created_at >= $1 AND created_at <= $2 
-         AND (payment_method != 'cod' AND payment_status = 'Pending')`,
+         WHERE (payment_method != 'cod' AND payment_status = 'Pending')
+         AND created_at >= $1 AND created_at <= $2`,
         [start.toISOString(), end.toISOString()]
       );
 
@@ -127,41 +127,73 @@ async function getAdminAnalyticsSummary(period = "7d") {
 
 
     // FALLBACK: ACTIVE USERS (If GA4 0)
-    // Use "Users who placed an order" as a proxy for Active Users if GA4 is missing
+    // We treat "Unique Visitors" (Sessions) as Active Users if GA4 is missing
+    let convertedUsers = 0;
     if (ga4Data.activeUsers === 0) {
-      // We already have unique users count from DB metrics? No, that's total users.
-      // Let's count distinct users who ordered in this period.
       try {
-        const activeRes = await pool.query(
+        // 1. Visitors = Unique Sessions across events
+        const visitorsRes = await pool.query(
+          `SELECT COUNT(DISTINCT session_id) as count FROM analytics_events WHERE created_at >= $1 AND created_at <= $2`,
+          [currStart.toISOString(), now.toISOString()]
+        );
+        // 2. Converted = Unique Users/Sessions who placed an order
+        // We use user_id here as orders table standard.
+        const convertedRes = await pool.query(
           `SELECT COUNT(DISTINCT user_id) as count FROM orders WHERE created_at >= $1 AND created_at <= $2`,
           [currStart.toISOString(), now.toISOString()]
         );
-        // If we have local events, we can also count active users from there
-        const localActiveRes = await pool.query(
-          `SELECT COUNT(DISTINCT user_id) as count FROM analytics_events WHERE created_at >= $1 AND created_at <= $2 AND user_id IS NOT NULL`,
-          [currStart.toISOString(), now.toISOString()]
+        
+        ga4Data.activeUsers = parseInt(visitorsRes.rows[0].count);
+        convertedUsers = parseInt(convertedRes.rows[0].count);
+        
+        // Ensure activeUsers is at least convertedUsers (can't have more buyers than visitors)
+        if (ga4Data.activeUsers < convertedUsers) ga4Data.activeUsers = convertedUsers;
+
+        // Prev period (simplified for trend)
+        const prevVisitorsRes = await pool.query(
+          `SELECT COUNT(DISTINCT session_id) as count FROM analytics_events WHERE created_at >= $1 AND created_at <= $2`,
+          [prevStart.toISOString(), prevEnd.toISOString()]
         );
-
-        const orderUsers = parseInt(activeRes.rows[0].count);
-        const eventUsers = parseInt(localActiveRes.rows[0]?.count || 0);
-
-        ga4Data.activeUsers = Math.max(orderUsers, eventUsers);
-
-        // Prev period (simplified to just orders for now to save query time, or repeat logic)
-        const prevActiveRes = await pool.query(
+        ga4Data.prevActiveUsers = parseInt(prevVisitorsRes.rows[0].count);
+        
+        const prevConvertedRes = await pool.query(
           `SELECT COUNT(DISTINCT user_id) as count FROM orders WHERE created_at >= $1 AND created_at <= $2`,
           [prevStart.toISOString(), prevEnd.toISOString()]
         );
-        ga4Data.prevActiveUsers = parseInt(prevActiveRes.rows[0].count);
+        ga4Data.prevConvertedUsers = parseInt(prevConvertedRes.rows[0].count);
       } catch (e) {
         // ignore
       }
+    } else {
+       // If we HAVE GA4 activeUsers, we still need convertedUsers from DB
+       try {
+         const convertedRes = await pool.query(
+            `SELECT COUNT(DISTINCT user_id) as count FROM orders WHERE created_at >= $1 AND created_at <= $2`,
+            [currStart.toISOString(), now.toISOString()]
+          );
+          convertedUsers = parseInt(convertedRes.rows[0].count);
+
+          const prevConvertedRes = await pool.query(
+            `SELECT COUNT(DISTINCT user_id) as count FROM orders WHERE created_at >= $1 AND created_at <= $2`,
+            [prevStart.toISOString(), prevEnd.toISOString()]
+          );
+          ga4Data.prevConvertedUsers = parseInt(prevConvertedRes.rows[0].count);
+       } catch(e) {}
     }
 
     // 4. Construct Response
     // Derived metrics
     const currAOV = currMetrics.orders > 0 ? (currMetrics.revenue / currMetrics.orders) : 0;
     const prevAOV = prevMetrics.orders > 0 ? (prevMetrics.revenue / prevMetrics.orders) : 0;
+
+    const currConvRate = ga4Data.activeUsers > 0 ? ((convertedUsers / ga4Data.activeUsers) * 100) : 0;
+    const prevConvRate = ga4Data.prevActiveUsers > 0 ? ((ga4Data.prevConvertedUsers / ga4Data.prevActiveUsers) * 100) : 0;
+
+    const calculateDropOff = (prev, curr) => {
+      if (prev <= 0) return 0;
+      if (curr >= prev) return 0; // Negative drop-off doesn't make sense in this context
+      return parseFloat(((1 - (curr / prev)) * 100).toFixed(1));
+    };
 
     return {
       // Raw Counts (GA4 or Local DB)
@@ -177,7 +209,10 @@ async function getAdminAnalyticsSummary(period = "7d") {
       potentialUsers: currMetrics.potentialUsers,
       totalRevenue: buildKPI(currMetrics.revenue, prevMetrics.revenue),
 
-      conversionRate: { value: 0, trend: null },
+      conversionRate: {
+        value: parseFloat(currConvRate.toFixed(2)),
+        trend: getTrend(currConvRate, prevConvRate)
+      },
       averageOrderValue: {
         value: parseFloat(currAOV.toFixed(2)),
         trend: getTrend(currAOV, prevAOV)
@@ -188,7 +223,11 @@ async function getAdminAnalyticsSummary(period = "7d") {
         addToCart: ga4Data.add_to_cart,
         beginCheckout: ga4Data.begin_checkout,
         purchase: currMetrics.orders,
-        dropOffs: { viewToCart: 0, cartToCheckout: 0, checkoutToPurchase: 0 }
+        dropOffs: {
+          viewToCart: calculateDropOff(ga4Data.view_item, ga4Data.add_to_cart),
+          cartToCheckout: calculateDropOff(ga4Data.add_to_cart, ga4Data.begin_checkout),
+          checkoutToPurchase: calculateDropOff(ga4Data.begin_checkout, currMetrics.orders)
+        }
       },
 
       topProducts: [],
@@ -680,6 +719,39 @@ async function getAnalyticsOrders(period = '7d', limit = 100) {
 }
 
 
+async function getPotentialUsers(period = "7d", limit = 100) {
+  try {
+    let startDate = new Date();
+    if (period === 'today') startDate.setHours(0, 0, 0, 0);
+    else if (period === '7d') startDate.setDate(startDate.getDate() - 7);
+    else if (period === '30d') startDate.setDate(startDate.getDate() - 30);
+
+    const query = `
+      SELECT o.order_number, o.id, u.emailid as customer_email, o.created_at, o.status, o.total, o.payment_method
+      FROM orders o
+      LEFT JOIN users u ON o.user_id = u.username
+      WHERE o.created_at >= $1
+      AND (o.payment_method != 'cod' AND o.payment_status = 'Pending')
+      ORDER BY o.created_at DESC
+      LIMIT $2
+    `;
+    const result = await pool.query(query, [startDate.toISOString(), limit]);
+
+    return result.rows.map(row => ({
+      orderId: row.order_number || row.id,
+      customerEmail: row.customer_email || 'Guest',
+      orderDate: row.created_at ? new Date(row.created_at).toISOString() : null,
+      status: 'Abandoned (Pending Online)',
+      orderTotal: parseFloat(row.total),
+      paymentMethod: row.payment_method || 'N/A'
+    }));
+  } catch (error) {
+    console.error('[ANALYTICS POTENTIAL USERS ERROR]', error);
+    return [];
+  }
+}
+
+
 /**
  * Get simple counts for Admin Dashboard entities (Brands, Categories, Products, Tips, Orders)
  * Faster than fetching all data.
@@ -724,6 +796,7 @@ module.exports = {
   getTopCategories,
   getAllAnalyticsUsers,
   getAnalyticsOrders,
+  getPotentialUsers,
   getDashboardEntityCounts,
   trackEvent
 };
