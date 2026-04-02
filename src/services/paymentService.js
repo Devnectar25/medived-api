@@ -95,11 +95,16 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
             [userId, internalOrderId, razorpay_payment_id, amount]
         );
 
-        // 3. Update payment_status to 'Paid' (keep status as Pending for admin processing)
+        // 3. Update payment_status and store payment_id (for future refunds)
         const orderResult = await client.query(
-            `UPDATE orders SET status = 'Pending', payment_status = 'Paid', updated_at = NOW() 
-             WHERE id = $1 RETURNING *`,
-            [internalOrderId]
+            `UPDATE orders 
+             SET status = 'Pending', 
+                 payment_status = 'Paid', 
+                 razorpay_payment_id = $2,
+                 updated_at = NOW() 
+             WHERE id = $1 
+             RETURNING *`,
+            [internalOrderId, razorpay_payment_id]
         );
 
         await client.query('COMMIT');
@@ -147,11 +152,15 @@ exports.handleWebhook = async (payload, signature) => {
                         [order.user_id, order.id, razorpayPaymentId, amount]
                     );
 
-                    // 2. Update order (set payment_status to Paid, keep status Pending)
+                    // 2. Update order (set payment_status to Paid, keep status Pending, store payment_id)
                     await client.query(
-                        `UPDATE orders SET status = 'Pending', payment_status = 'Paid', updated_at = NOW() 
+                        `UPDATE orders 
+                         SET status = 'Pending', 
+                             payment_status = 'Paid', 
+                             razorpay_payment_id = $2,
+                             updated_at = NOW() 
                          WHERE id = $1`,
-                        [order.id]
+                        [order.id, razorpayPaymentId]
                     );
                 }
             }
