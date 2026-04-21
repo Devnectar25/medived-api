@@ -128,7 +128,8 @@ app.use('/api/payments', require('./routes/paymentRoutes'));
 app.use('/api/chatbot', require('./routes/chatbotRoutes'));
 app.use('/api/admin/targeting', require('./routes/targetingRoutes'));
 // app.use('/api/returns', require('./routes/returnRoutes')); // HOM-139: Backend WIP
-
+app.use('/api/admin/users', require('./routes/userRoutes'));
+app.use('/api/campaigns', require('./routes/campaignRoutes'));
 
 app.get('/', (req, res) => {
     res.send("HomeVed API is running....");
