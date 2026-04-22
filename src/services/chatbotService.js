@@ -110,13 +110,31 @@ function extractKeywords(tokens) {
  * Returns false for queries that are clearly not product searches.
  */
 function isLikelyProductQuery(lowerQuery, tokens) {
+    // ── Pre-check: Ayurvedic Keywords ──
+    // If it contains a known Ayurvedic term, it's likely okay to search
+    const ayurvedicTerms = [
+        'ashwagandha', 'triphala', 'brahmi', 'shatavari', 'giloy', 'amla', 'shilajit', 
+        'turmeric', 'haldi', 'curcumin', 'neem', 'tulsi', 'guggul', 'honey', 'capsule',
+        'tablet', 'syrup', 'oil', 'powder', 'churna', 'rasa', 'bhasma'
+    ];
+    const hasAyurvedicTerm = tokens.some(t => ayurvedicTerms.includes(t));
+    if (hasAyurvedicTerm) return true;
+
+    // ── Intent Check ──
+    const { intent } = detectIntentFromTokens(tokens);
+    const productIntents = ['product_search', 'product_info', 'product_listing', 'pricing_info', 'health_query'];
+    const isExplicitProductIntent = productIntents.includes(intent);
+
+    // If it's a short query and not an explicit product intent or ayurvedic term, block it
+    if (tokens.length < 3 && !isExplicitProductIntent && !hasAyurvedicTerm) return false;
+
     // Patterns that signal a NON-product query — block product search for these
     const nonProductPatterns = [
         /who\s+(is|are|was|owns|founded|runs|leads)/i,
         /\b(owner|founder|ceo|director|president|chairman|manager|head)\b/i,
-        /\b(company|organization|organisation|enterprise|business|startup|firm)\b.*\b(info|about|background|history|profile)\b/i,
+        /^(what|how|where|when|why)\s+(is|are|was|were|do|does)\b(?!.*(product|ayurveda|ayurvedic|medicine|tablet|syrup|oil|powder|capsule|brand))/i,
+        /\b(is|are|was|were|do|does)\b.*\b(you|your|me|my)\b(?!.*(product|ayurveda|ayurvedic))/i,
         /tell\s+me\s+about\s+(homeved|mediveda|the\s+company|your\s+company)/i,
-        /what\s+is\s+(homeved|mediveda)/i,
         /\b(when\s+was|when\s+did|how\s+many\s+employees|headquarters|location|address\s+of)\b/i,
     ];
 
@@ -124,7 +142,7 @@ function isLikelyProductQuery(lowerQuery, tokens) {
         if (pattern.test(lowerQuery)) return false;
     }
 
-    return true;
+    return isExplicitProductIntent;
 }
 
 /**
@@ -594,6 +612,39 @@ exports.processQuery = async (query, sessionId = 'default') => {
         },
     ];
 
+    // ── Stage 5.5: Inventory Count Queries (NEW) ───────────────────────────────
+    const isHowMany = lowerQuery.includes('how many') || lowerQuery.includes('total') || lowerQuery.includes('list of all') || lowerQuery.includes('count');
+    const mentionsProducts = lowerQuery.includes('product');
+    const mentionsCategories = lowerQuery.includes('categor');
+
+    if (isHowMany && mentionsProducts && !mentionsCategories) {
+        try {
+            const countRes = await pool.query('SELECT COUNT(*) FROM products WHERE active = true');
+            const total = countRes.rows[0].count;
+            return {
+                answer: `We have a total of ${total} premium Ayurvedic products available. You can search for specific items or ask me to list products by category!`,
+                intent: 'inventory_info',
+                confidence: 1.0,
+                products: []
+            };
+        } catch (e) { /* fall through */ }
+    }
+
+    if (isHowMany && mentionsCategories) {
+        try {
+            const countRes = await pool.query('SELECT COUNT(*) FROM category WHERE active = true');
+            const total = countRes.rows[0].count;
+            const namesRes = await pool.query('SELECT name FROM category WHERE active = true ORDER BY name LIMIT 6');
+            const names = namesRes.rows.map(r => r.name).join(', ');
+            return {
+                answer: `We have ${total} categories of Ayurvedic wellness products, including ${names}, and more. Which category are you interested in?`,
+                intent: 'inventory_info',
+                confidence: 1.0,
+                products: []
+            };
+        } catch (e) { /* fall through */ }
+    }
+
     for (const item of companyInfoPatterns) {
         if (item.pattern.test(sanitizedQuery)) {
             return {
@@ -759,14 +810,14 @@ exports.processQuery = async (query, sessionId = 'default') => {
         const fuzzySql = `
             SELECT product_id, productname, word_similarity($1, productname) AS score
             FROM products
-            WHERE active = true AND word_similarity($1, productname) > 0.35
+            WHERE active = true AND word_similarity($1, productname) > 0.45
             ORDER BY score DESC
             LIMIT 1
         `;
         try {
             const fuzzyResult = await pool.query(fuzzySql, [sanitizedQuery]);
 
-            if (fuzzyResult.rows.length > 0 && fuzzyResult.rows[0].score > 0.35) {
+            if (fuzzyResult.rows.length > 0 && fuzzyResult.rows[0].score > 0.45) {
                 const suggestedName = fuzzyResult.rows[0].productname;
                 const matchedProducts = await productService.simpleChatbotSearch(suggestedName);
 
@@ -794,7 +845,7 @@ exports.processQuery = async (query, sessionId = 'default') => {
     await logUnansweredQuery(sanitizedQuery, detectedIntent);
 
     return {
-        answer: "Sorry, we don't have too much knowledge about that.\n\nYou can try asking about:\n• Product names (e.g. \"Ashwagandha\", \"Turmeric\", \"Triphala\")\n• Health topics (e.g. \"stress relief\", \"immunity\", \"digestion\")\n• Company info (e.g. \"about HomeVed\", \"contact\", \"return policy\")\n• Pricing (e.g. \"products under ₹500\")",
+        answer: "I am sorry, but that answer is not in my knowledge based. I specialize in Ayurveda and Homeved products.",
         intent: 'fallback',
         confidence: 0.0,
         products: []
