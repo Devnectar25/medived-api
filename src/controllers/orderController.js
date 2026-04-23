@@ -20,8 +20,9 @@ exports.getAllOrders = async (req, res) => {
         const status = req.query.status;
         const paymentStatus = req.query.paymentStatus;
         const type = req.query.type;
+        const userName = req.query.userName;
 
-        const result = await orderService.getAllOrders({ limit, offset, status, paymentStatus, type });
+        const result = await orderService.getAllOrders({ limit, offset, status, paymentStatus, type, userName });
         res.status(200).json({
             success: true,
             data: result.orders,
