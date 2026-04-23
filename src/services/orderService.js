@@ -204,6 +204,12 @@ exports.getAllOrders = async (options = {}) => {
         paramIndex++;
     }
 
+    if (options.userName) {
+        baseQuery += ` AND (u.username ILIKE $${paramIndex} OR u.emailid ILIKE $${paramIndex})`;
+        params.push(`%${options.userName}%`);
+        paramIndex++;
+    }
+
     const countResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, params);
     const totalCount = parseInt(countResult.rows[0].count);
 

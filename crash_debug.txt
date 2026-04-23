@@ -1,0 +1,5 @@
+TypeError: chatbotService.localizeText is not a function
+    at C:\Users\Admin\Desktop\homeved\medived-api\src\controllers\chatbotController.js:29:34
+    at Array.map (<anonymous>)
+    at exports.processQuery (C:\Users\Admin\Desktop\homeved\medived-api\src\controllers\chatbotController.js:27:56)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
