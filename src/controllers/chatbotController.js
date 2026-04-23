@@ -5,19 +5,19 @@ const chatbotService = require('../services/chatbotService');
  */
 exports.processQuery = async (req, res) => {
     try {
-        const { query, sessionId } = req.body;
+        const { query, sessionId, language = 'en' } = req.body;
 
         if (!query || query.trim().length < 1) {
             return res.json({
                 success: false,
-                message: "Please provide a question or search term."
+                message: language === 'hi' ? "कृपया कोई प्रश्न या खोज शब्द प्रदान करें।" : "Please provide a question or search term."
             });
         }
 
-        console.log('📝 NLP chatbot query:', query);
+        console.log(`📝 NLP chatbot query (${language}):`, query);
 
         // Run the NLP pipeline
-        const result = await chatbotService.processQuery(query, sessionId);
+        const result = await chatbotService.processQuery(query, sessionId, language);
 
         if (!result) {
             throw new Error("Chatbot service returned no result");
@@ -26,10 +26,10 @@ exports.processQuery = async (req, res) => {
         // Map products for frontend consistency
         const mappedProducts = (result.products || []).map(p => ({
             id: p.id,
-            name: p.name,
+            name: chatbotService.localizeText(p.name, language),
             price: p.price,
-            description: p.shortDescription || p.description,
-            availability: p.inStock ? "In Stock" : "Out of Stock",
+            description: chatbotService.localizeText(p.shortDescription || p.description, language),
+            availability: language === 'hi' ? (p.inStock ? "स्टॉक में" : "स्टॉक से बाहर") : language === 'pa' ? (p.inStock ? "ਸਟਾਕ ਵਿੱਚ" : "ਸਟਾਕ ਤੋਂ ਬਾਹਰ") : (p.inStock ? "In Stock" : "Out of Stock"),
             image: p.image,
             rating: p.rating,
             inStock: p.inStock
