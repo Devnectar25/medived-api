@@ -49,20 +49,24 @@ async function getAdminAnalyticsSummary(period = "7d") {
       // Total Users (cumulative up to end date)
       const usersRes = await pool.query('SELECT COUNT(*) as count FROM users WHERE createdate <= $1', [end.toISOString()]);
 
-      // Orders & Revenue (within period) - Only successful orders
+      // Orders & Revenue (within period) - Only successful/valid orders
+      // Exclude 'Cancelled' and 'Refunded' for real revenue/confirmed count
       const ordersRes = await pool.query(
         `SELECT COUNT(*) as count, COALESCE(SUM(total), 0) as revenue 
          FROM orders 
          WHERE created_at >= $1 AND created_at <= $2 
+         AND status != 'Cancelled' AND status != 'Refunded'
          AND (payment_method = 'cod' OR payment_status != 'Pending')`,
         [start.toISOString(), end.toISOString()]
       );
 
       // Potential Users / Abandoned Checkouts - Filtered by selected date period
+      // These are orders that started but didn't finish payment (online)
       const potentialUsersRes = await pool.query(
         `SELECT COUNT(*) as count 
          FROM orders 
-         WHERE (payment_method != 'cod' AND payment_status = 'Pending')
+         WHERE status != 'Cancelled'
+         AND (payment_method != 'cod' AND payment_status = 'Pending')
          AND created_at >= $1 AND created_at <= $2`,
         [start.toISOString(), end.toISOString()]
       );
@@ -139,7 +143,7 @@ async function getAdminAnalyticsSummary(period = "7d") {
         // 2. Converted = Unique Users/Sessions who placed an order
         // We use user_id here as orders table standard.
         const convertedRes = await pool.query(
-          `SELECT COUNT(DISTINCT user_id) as count FROM orders WHERE created_at >= $1 AND created_at <= $2`,
+          `SELECT COUNT(DISTINCT user_id) as count FROM orders WHERE created_at >= $1 AND created_at <= $2 AND status != 'Cancelled'`,
           [currStart.toISOString(), now.toISOString()]
         );
         
@@ -168,7 +172,7 @@ async function getAdminAnalyticsSummary(period = "7d") {
        // If we HAVE GA4 activeUsers, we still need convertedUsers from DB
        try {
          const convertedRes = await pool.query(
-            `SELECT COUNT(DISTINCT user_id) as count FROM orders WHERE created_at >= $1 AND created_at <= $2`,
+            `SELECT COUNT(DISTINCT user_id) as count FROM orders WHERE created_at >= $1 AND created_at <= $2 AND status != 'Cancelled'`,
             [currStart.toISOString(), now.toISOString()]
           );
           convertedUsers = parseInt(convertedRes.rows[0].count);
@@ -758,13 +762,18 @@ async function getPotentialUsers(period = "7d", limit = 100) {
  */
 const getDashboardEntityCounts = async () => {
   try {
-    const [brands, categories, products, tips, orders, potentialUsers] = await Promise.all([
+    const [brands, categories, products, tips, orders, potentialUsers, delivered, pending, processing, canceled, pendingPayment] = await Promise.all([
       pool.query('SELECT COUNT(*) as count FROM brand'),
       pool.query('SELECT COUNT(*) as count FROM category'),
       pool.query('SELECT COUNT(*) as count FROM products'),
       pool.query('SELECT COUNT(*) as count FROM health_tips'),
-      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending')"),
-      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method != 'cod' AND payment_status = 'Pending')")
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE status != 'Cancelled' AND status != 'Refunded' AND (payment_method = 'cod' OR payment_status != 'Pending')"),
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE status != 'Cancelled' AND (payment_method != 'cod' AND payment_status = 'Pending')"),
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Delivered'"),
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Pending'"),
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Processing'"),
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status IN ('Cancelled', 'Returned', 'Refunded')"),
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND payment_status = 'Pending'")
     ]);
 
     return {
@@ -773,7 +782,12 @@ const getDashboardEntityCounts = async () => {
       products: parseInt(products.rows[0].count),
       tips: parseInt(tips.rows[0].count),
       orders: parseInt(orders.rows[0].count),
-      potentialUsers: parseInt(potentialUsers.rows[0].count)
+      potentialUsers: parseInt(potentialUsers.rows[0].count),
+      delivered: parseInt(delivered.rows[0].count),
+      pending: parseInt(pending.rows[0].count),
+      processing: parseInt(processing.rows[0].count),
+      canceled: parseInt(canceled.rows[0].count),
+      pendingPayment: parseInt(pendingPayment.rows[0].count)
     };
   } catch (error) {
     console.error("Error fetching dashboard entity counts:", error);

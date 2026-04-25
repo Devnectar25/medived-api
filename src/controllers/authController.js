@@ -63,8 +63,9 @@ exports.resendOtp = async (req, res) => {
 exports.adminLogin = async (req, res) => {
     try {
         const { username, password } = req.body;
+        const ipAddress = req.ip || req.connection?.remoteAddress || '';
         console.log(`[adminLogin] Attempt for username: ${username}`);
-        const result = await authService.loginAdmin(username, password);
+        const result = await authService.loginAdmin(username, password, ipAddress);
         console.log(`[adminLogin] Success for username: ${username}`);
         res.json({ success: true, ...result });
     } catch (error) {

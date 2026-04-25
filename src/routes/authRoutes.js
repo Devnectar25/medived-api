@@ -3,7 +3,8 @@ const router = express.Router();
 const passport = require('passport');
 const crypto = require('crypto');
 const authController = require('../controllers/authController');
-const { protect } = require('../middlewares/authMiddleware');
+const subAdminController = require('../controllers/subAdminController');
+const { protect, authorize } = require('../middlewares/authMiddleware');
 
 
 router.post('/register', authController.register);
@@ -11,6 +12,13 @@ router.post('/login', authController.login);
 router.post('/verify-otp', authController.verifyOtp);
 router.post('/resend-otp', authController.resendOtp);
 router.post('/admin/login', authController.adminLogin);
+
+// Sub-admin management routes
+router.get('/admin/subadmins', protect, authorize('admin'), subAdminController.getSubAdmins);
+router.post('/admin/subadmins', protect, authorize('admin'), subAdminController.createSubAdmin);
+router.put('/admin/subadmins/:id', protect, authorize('admin'), subAdminController.updateSubAdmin);
+router.delete('/admin/subadmins/:id', protect, authorize('admin'), subAdminController.deleteSubAdmin);
+router.get('/admin/audit-logs', protect, authorize('admin'), subAdminController.getAuditLogs);
 
 
 
