@@ -204,7 +204,7 @@ exports.resendOtp = async (email) => {
 
 // --- ADMIN AUTH ---
 
-exports.loginAdmin = async (username, password) => {
+exports.loginAdmin = async (username, password, ipAddress) => {
     console.log(`[authService] loginAdmin called for: ${username}`);
 
     // 1. Query DB
@@ -219,8 +219,18 @@ exports.loginAdmin = async (username, password) => {
             console.log(`[authService] Plain password matched (fallback)`);
         } else {
             console.log(`[authService] Credentials rejected`);
+            if (adminRow) {
+                await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", [adminRow.adminid, username, 'FAILED_LOGIN', 'Invalid password', ipAddress]);
+            } else {
+                await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", [null, username, 'FAILED_LOGIN', 'User not found', ipAddress]);
+            }
             throw new Error("Invalid username or password");
         }
+    }
+
+    if (adminRow.userid !== 'Admin' && adminRow.active === false) {
+        await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", [adminRow.adminid, username, 'FAILED_LOGIN', 'Account deactivated', ipAddress]);
+        throw new Error("Your account has been deactivated. Please contact Super Admin.");
     }
 
     console.log(`[authService] Credentials valid. Generating token...`);
@@ -239,6 +249,9 @@ exports.loginAdmin = async (username, password) => {
         };
 
         console.log(`[authService] Admin object prepared: ${JSON.stringify(admin)}`);
+        
+        await pool.query("INSERT INTO audit_logs (admin_id, username, action, details, ip_address) VALUES ($1, $2, $3, $4, $5)", [adminRow.adminid, username, 'LOGIN_SUCCESS', 'User logged in', ipAddress]);
+        
         return { admin, token };
     } catch (e) {
         console.error(`[authService] Token generation failed: ${e.message}`, e.stack);
