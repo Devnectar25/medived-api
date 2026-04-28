@@ -7,11 +7,11 @@ exports.uploadMiddleware = multer({
     storage: storage,
     limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
     fileFilter: (req, file, cb) => {
-        const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+        const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'application/pdf'];
         if (allowedTypes.includes(file.mimetype)) {
             cb(null, true);
         } else {
-            cb(new Error('Invalid file type. Only JPEG, PNG, WebP, and SVG are allowed.'));
+            cb(new Error('Invalid file type. Only JPEG, PNG, WebP, SVG, and PDF are allowed.'));
         }
     }
 }).single('image');

@@ -105,6 +105,18 @@ app.use(passport.session());
 
 
 // ⭐ IMPORTANT — Attach API route
+const orderController = require('./controllers/orderController');
+const { protect, authorize } = require('./middlewares/authMiddleware');
+
+app.get('/api/admin/cancelled-orders', protect, authorize('admin'), orderController.getCancelledOrders);
+app.get('/api/admin/refund-desk', protect, authorize('admin'), orderController.getCancelledOrders); // Alias for rebranding
+app.get('/api/admin/cancelled-orders/stats', protect, authorize('admin'), orderController.getCancelledOrdersStats);
+app.get('/api/admin/refund-desk/stats', protect, authorize('admin'), orderController.getCancelledOrdersStats); // Alias
+app.patch('/api/admin/order/:id/refund-status', protect, authorize('admin'), orderController.updateRefundStatus);
+app.patch('/api/admin/refund/:id/status', protect, authorize('admin'), orderController.updateRefundStatus); // Alias
+app.post('/api/admin/refunds/initiate', protect, authorize('admin'), require('./controllers/refundController').initiateRazorpayRefund);
+app.post('/api/admin/order/:id/restock', protect, authorize('admin'), orderController.restockOrder);
+
 app.use('/api/products', productRoutes);
 app.use('/api/brands', brandRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -123,6 +135,7 @@ app.use("/api/admin/analytics", adminAnalyticsRoutes);
 app.use('/api/contact', require('./routes/contactRoutes'));
 app.use('/api/faqs', require('./routes/faqRoutes'));
 app.use('/api/analytics', require('./routes/publicAnalyticsRoutes'));
+
 // app.use('/api/debug', require('./routes/debugRoutes')); // Temporary debug route (Disabled for prod)
 app.use('/api/payments', require('./routes/paymentRoutes'));
 app.use('/api/chatbot', require('./routes/chatbotRoutes'));
