@@ -122,7 +122,7 @@ exports.updateOrderStatus = async (req, res) => {
             if (!isOwner) {
                 return res.status(403).json({ success: false, message: 'Not authorized' });
             }
-            if (status !== 'Cancelled' && status !== 'Cancellation Processing') {
+            if (status !== 'Cancelled' && status !== 'Cancellation Requested') {
                 return res.status(403).json({ success: false, message: 'Regular users can only cancel orders' });
             }
             // Enforce 24h limit for non-admins
@@ -131,7 +131,7 @@ exports.updateOrderStatus = async (req, res) => {
                 return res.status(400).json({ success: false, message: 'Order can only be cancelled within 24 hours of placement' });
             }
             // Cancellable statuses matches frontend UI logic - extended to allow Shipped/Out for Delivery within 24h
-            const cancellableStatuses = ['Pending', 'Confirmed', 'Processing', 'Shipped', 'Out for Delivery', 'Cancellation Processing', 'Cancelled'];
+            const cancellableStatuses = ['Pending', 'Confirmed', 'Processing', 'Shipped', 'Out for Delivery', 'Cancellation Requested', 'Cancelled'];
             const orderStatus = order.status || 'Pending';
             if (!cancellableStatuses.includes(orderStatus) && orderStatus.toLowerCase() !== 'pending') {
                 return res.status(400).json({ success: false, message: `Order with status '${orderStatus}' cannot be cancelled` });
@@ -225,6 +225,20 @@ exports.requestReturnReplace = async (req, res) => {
         const result = await orderService.requestReturnReplace(id, userId, req.body);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+exports.requestItemCancellation = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user.id;
+        const isAdmin = req.user.role === 'admin';
+        console.log(`[OrderController] requestItemCancellation: ID=${id}, User=${userId}, isAdmin=${isAdmin}`);
+        const result = await orderService.requestItemCancellation(id, userId, req.body, isAdmin);
+        res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        console.error('[OrderController] requestItemCancellation error:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 };

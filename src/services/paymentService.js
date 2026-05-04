@@ -176,3 +176,28 @@ exports.handleWebhook = async (payload, signature) => {
 
     return { success: true };
 };
+
+exports.refundPayment = async (paymentId, amount, speed = 'normal') => {
+    const rzp = getRazorpay();
+    if (!rzp) {
+        console.warn('⚠️ Razorpay not configured. Skipping automated refund.');
+        return null;
+    }
+
+    try {
+        console.log(`[PaymentService] Initiating refund for Payment ID: ${paymentId}, Amount: ${amount}`);
+        const refund = await rzp.payments.refund(paymentId, {
+            amount: Math.round(amount * 100), // convert to paise
+            speed: speed,
+            notes: {
+                reason: 'Customer Return/Cancellation Approved by Admin',
+                initiated_by: 'Homeveda Admin Dashboard'
+            }
+        });
+        console.log(`[PaymentService] Refund successful: ${refund.id}`);
+        return refund;
+    } catch (error) {
+        console.error('[PaymentService] Razorpay refund failed:', error);
+        throw error;
+    }
+};
