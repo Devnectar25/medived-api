@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: 'Inter', sans-serif; margin: 0; padding: 20px; color: #333; }
+        .receipt-container { 
+            width: 100mm; 
+            border: 1px solid #eee; 
+            padding: 20px; 
+            background: #fff;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+        .header { text-align: center; margin-bottom: 20px; }
+        .logo { max-width: 150px; margin-bottom: 10px; }
+        .title { font-size: 18px; font-weight: 800; color: #00b58a; text-transform: uppercase; letter-spacing: 1px; }
+        
+        .divider { border-top: 1px dashed #ddd; margin: 15px 0; }
+        
+        .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px; }
+        .label { color: #666; }
+        .value { font-weight: 600; text-align: right; }
+        
+        .amount-section { 
+            background: #f0fdf9; 
+            border: 1px solid #bbf7d0; 
+            padding: 15px; 
+            border-radius: 8px; 
+            text-align: center;
+            margin: 20px 0;
+        }
+        .amount-label { font-size: 10px; color: #065f46; text-transform: uppercase; }
+        .amount-value { font-size: 24px; font-weight: 900; color: #00b58a; }
+        
+        .footer { text-align: center; font-size: 10px; color: #999; margin-top: 20px; }
+        .success-badge { 
+            background: #00b58a; 
+            color: white; 
+            padding: 4px 12px; 
+            border-radius: 20px; 
+            font-size: 10px; 
+            font-weight: bold;
+            display: inline-block;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="receipt-container">
+        <div class="header">
+            <img src="{{logoBase64}}" class="logo" alt="HOMVED Logo">
+            <div class="success-badge">REFUND SUCCESSFUL</div>
+            <div class="title">Refund Receipt</div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="info-row">
+            <span class="label">Refund ID:</span>
+            <span class="value">{{refundId}}</span>
+        </div>
+        <div class="info-row">
+            <span class="label">Order Number:</span>
+            <span class="value">#{{orderNumber}}</span>
+        </div>
+        <div class="info-row">
+            <span class="label">Original Txn ID:</span>
+            <span class="value">{{paymentId}}</span>
+        </div>
+        <div class="info-row">
+            <span class="label">Date & Time:</span>
+            <span class="value">{{dateTime}}</span>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="info-row">
+            <span class="label">Customer Name:</span>
+            <span class="value">{{customerName}}</span>
+        </div>
+        <div class="info-row">
+            <span class="label">Mobile Number:</span>
+            <span class="value">{{customerPhone}}</span>
+        </div>
+        <div class="info-row">
+            <span class="label">Refund Method:</span>
+            <span class="value uppercase">{{method}}</span>
+        </div>
+
+        <div class="amount-section">
+            <div class="amount-label">Amount Reversed</div>
+            <div class="amount-value">{{currency}}{{amount}}</div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="footer">
+            Thank you for shopping with HOMVED.<br>
+            The refund should reflect in your account within 5-7 working days.<br>
+            © 2026 HOMVED. All Rights Reserved.
+        </div>
+    </div>
+</body>
+</html>
