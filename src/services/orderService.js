@@ -671,8 +671,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 // Determine stock adjustment
                 // If moving TO a cancelled state from a non-cancelled state -> Restore stock (+)
                 // If moving FROM a cancelled state to a non-cancelled state -> Reduce stock (-)
-                const isCancelling = (status === 'Cancelled' || status === 'Cancellation Requested' || status === 'CANCEL_REQUESTED' || status === 'CANCEL_APPROVED');
-                const wasCancelling = (originalItem.status === 'Cancelled' || originalItem.status === 'Cancellation Requested' || originalItem.status === 'CANCEL_REQUESTED' || originalItem.status === 'CANCEL_APPROVED');
+                const isCancelling = (status === 'Cancelled' || status === 'Cancellation Requested' || status === 'CANCEL_REQUESTED' || status === 'CANCEL_APPROVED' || status === 'Return Approved' || status === 'Returned' || status === 'Refunded');
+                const wasCancelling = (originalItem.status === 'Cancelled' || originalItem.status === 'Cancellation Requested' || originalItem.status === 'CANCEL_REQUESTED' || originalItem.status === 'CANCEL_APPROVED' || originalItem.status === 'Return Approved' || originalItem.status === 'Returned' || originalItem.status === 'Refunded');
 
                 let stockAdjustment = 0;
                 if (isCancelling && !wasCancelling) {
@@ -707,7 +707,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             } else {
                 // Calculate new subtotal for remaining active items
                 const subtotalResult = await client.query(
-                    `SELECT SUM(price * quantity) as new_subtotal FROM order_items WHERE order_id = $1::uuid AND (status IS NULL OR status != 'Cancelled')`,
+                    `SELECT SUM(price * quantity) as new_subtotal FROM order_items WHERE order_id = $1::uuid AND (status IS NULL OR (status != 'Cancelled' AND status != 'Return Approved' AND status != 'Returned' AND status != 'Refunded'))`,
                     [orderId]
                 );
                 const newSubtotal = parseFloat(subtotalResult.rows[0].new_subtotal || 0);
@@ -932,12 +932,39 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
         const itemExcludedStatuses = ['Cancelled', 'Returned', 'Refunded', 'Cancellation Requested', 'Return Request Processing', 'Replacement Request Processing', 'Return Approved', 'Return Rejected', 'Replace Approved', 'Replace Rejected'];
         
         if (syncableStatuses.includes(status)) {
-            await client.query(
-                `UPDATE order_items 
-                 SET status = $1 
-                 WHERE order_id = $2 AND (status IS NULL OR status NOT IN (SELECT unnest($3::text[])))`, 
-                [status, orderId, itemExcludedStatuses]
+            // Check if there are any active Return/Replacement items in this order
+            const hasSpecialItems = (oldOrder.items || []).some(item => 
+                (item.status || '').toLowerCase().includes('replace') || 
+                (item.status || '').toLowerCase().includes('return')
             );
+
+            if (hasSpecialItems) {
+                // For orders with active replacements/returns, we do NOT bulk-update item statuses.
+                // The order-level status is used to track the logistics of the replacement item.
+                // The UI will display the composite status (e.g., Replace Approved | Shipped).
+                // This prevents already-delivered items from having their status changed.
+                console.log(`[OrderSync] Order ${orderId} has special items. Skipping bulk item sync to protect Delivered/Replaced states.`);
+            } else {
+                // Standard Lifecycle-aware sync for normal orders
+                const lifecycle = ['Pending', 'Confirmed', 'Processing', 'Shipped', 'Out for Delivery', 'Delivered'];
+                const targetIndex = lifecycle.indexOf(status);
+                
+                const effectiveExcluded = [...itemExcludedStatuses];
+                if (targetIndex !== -1) {
+                    lifecycle.forEach((s, idx) => {
+                        if (idx >= targetIndex && !effectiveExcluded.includes(s)) {
+                            effectiveExcluded.push(s);
+                        }
+                    });
+                }
+
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = $1 
+                     WHERE order_id = $2 AND (status IS NULL OR status NOT IN (SELECT unnest($3::text[])))`, 
+                    [status, orderId, effectiveExcluded]
+                );
+            }
         }
 
         const order = await exports.getOrderById(orderId);
