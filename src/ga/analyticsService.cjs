@@ -762,17 +762,19 @@ async function getPotentialUsers(period = "7d", limit = 100) {
  */
 const getDashboardEntityCounts = async () => {
   try {
-    const [brands, categories, products, tips, orders, potentialUsers, delivered, pending, processing, canceled, pendingPayment] = await Promise.all([
+    const [brands, categories, products, tips, orders, potentialUsers, delivered, pending, processing, shipped, outForDelivery, canceled, pendingPayment] = await Promise.all([
       pool.query('SELECT COUNT(*) as count FROM brand'),
       pool.query('SELECT COUNT(*) as count FROM category'),
       pool.query('SELECT COUNT(*) as count FROM products'),
       pool.query('SELECT COUNT(*) as count FROM health_tips'),
-      pool.query("SELECT COUNT(*) as count FROM orders WHERE status != 'Cancelled' AND status != 'Refunded' AND (payment_method = 'cod' OR payment_status != 'Pending')"),
-      pool.query("SELECT COUNT(*) as count FROM orders WHERE status != 'Cancelled' AND (payment_method != 'cod' AND payment_status = 'Pending')"),
+      pool.query("SELECT COUNT(*) as count FROM orders"), // Return absolute total of all orders
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE payment_method != 'cod' AND payment_status = 'Pending'"),
       pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Delivered'"),
       pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Pending'"),
       pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Processing'"),
-      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status IN ('Cancelled', 'Returned', 'Refunded')"),
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status IN ('Shipped', 'Confirmed')"),
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Out for Delivery'"),
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status IN ('Cancelled', 'Returned', 'Refunded', 'Cancellation Requested', 'Return Requested', 'Return Approved', 'Return Rejected', 'Replace Requested', 'Replace Approved', 'Replace Rejected', 'Received at Homved', 'Restocked')"),
       pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND payment_status = 'Pending'")
     ]);
 
@@ -786,6 +788,8 @@ const getDashboardEntityCounts = async () => {
       delivered: parseInt(delivered.rows[0].count),
       pending: parseInt(pending.rows[0].count),
       processing: parseInt(processing.rows[0].count),
+      shipped: parseInt(shipped.rows[0].count),
+      outForDelivery: parseInt(outForDelivery.rows[0].count),
       canceled: parseInt(canceled.rows[0].count),
       pendingPayment: parseInt(pendingPayment.rows[0].count)
     };

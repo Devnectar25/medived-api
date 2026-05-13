@@ -41,6 +41,38 @@ const sendCampaignMessage = async (campaign, user, productData) => {
     return { success: true, messageId: `mock-${Date.now()}` };
 };
 
+const sendOrderUpdateNotification = async (order, type, customMessage) => {
+    const phone = order.shippingAddress?.phone || order.user_phone;
+    if (!phone) return;
+
+    let message = "";
+    switch(type) {
+        case 'Return Approved':
+            message = `Hi ${order.shippingAddress.firstName}, your return request for order ${order.order_number} has been approved. Our logistics partner will pick up the items within 24-48 hours.`;
+            break;
+        case 'Replace Approved':
+            message = `Hi ${order.shippingAddress.firstName}, your replacement request for order ${order.order_number} has been approved. A new replacement order has been created for you.`;
+            break;
+        case 'Cancelled':
+            message = `Hi ${order.shippingAddress.firstName}, your order ${order.order_number} has been successfully cancelled. Refund (if applicable) will be processed to your original payment method.`;
+            break;
+        case 'Refunded':
+            message = `Hi ${order.shippingAddress.firstName}, refund for your order ${order.order_number} has been processed. It should reflect in your account within 5-7 business days.`;
+            break;
+        default:
+            message = customMessage || `Update on your Order ${order.order_number}: Status is now ${order.status}`;
+    }
+
+    console.log(`\n================================`);
+    console.log(`💬 WHATSAPP ORDER NOTIFICATION`);
+    console.log(`To: ${phone}`);
+    console.log(`Message: ${message}`);
+    console.log(`================================\n`);
+
+    return { success: true };
+};
+
 module.exports = {
-    sendCampaignMessage
+    sendCampaignMessage,
+    sendOrderUpdateNotification
 };

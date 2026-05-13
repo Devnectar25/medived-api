@@ -7,15 +7,22 @@ exports.uploadImage = async (file, folder = 'brand') => {
         if (!file || !file.originalname) {
             throw new Error('Invalid file: missing originalname');
         }
-        const timestamp = Date.now();
-        const fileExt = file.originalname.split('.').pop() || 'jpg';
-        const fileName = `${folder}/${timestamp}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+        return await exports.uploadBuffer(file.buffer, `${folder}/${Date.now()}-${Math.random().toString(36).substring(7)}`, file.mimetype || 'image/jpeg');
+    } catch (error) {
+        throw error;
+    }
+};
+
+exports.uploadBuffer = async (buffer, filePath, contentType = 'application/pdf') => {
+    try {
+        const fileExt = filePath.split('.').pop();
+        const finalPath = filePath.includes('.') ? filePath : `${filePath}.${contentType.split('/')[1] || 'bin'}`;
 
         const { data, error } = await supabase.storage
             .from(BUCKET_NAME)
-            .upload(fileName, file.buffer, {
-                contentType: file.mimetype,
-                upsert: false
+            .upload(finalPath, buffer, {
+                contentType,
+                upsert: true
             });
 
         if (error) {
@@ -24,7 +31,7 @@ exports.uploadImage = async (file, folder = 'brand') => {
 
         const { data: publicUrlData } = supabase.storage
             .from(BUCKET_NAME)
-            .getPublicUrl(fileName);
+            .getPublicUrl(finalPath);
 
         return publicUrlData.publicUrl;
     } catch (error) {
