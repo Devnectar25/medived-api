@@ -6,6 +6,7 @@ const mapHealthTip = (t) => ({
     title: t.title,
     excerpt: t.excerpt,
     image: t.image,
+    videoUrl: t.video_url,
     date: t.date,
     readTime: t.read_time,
     author: t.author,
@@ -43,34 +44,43 @@ exports.getHealthTipById = async (id) => {
 };
 
 exports.createHealthTip = async (data) => {
-    const { title, excerpt, image, date, readTime, author, category, content, active } = data;
+    const { title, excerpt, image, videoUrl, date, readTime, author, category, content, active } = data;
     const result = await pool.query(
-        "INSERT INTO health_tips (title, excerpt, image, date, read_time, author, category, content, active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
-        [title, excerpt, image, date, readTime, author, category, content, active !== false]
+        "INSERT INTO health_tips (title, excerpt, image, video_url, date, read_time, author, category, content, active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *",
+        [title, excerpt, image, videoUrl, date, readTime, author, category, content, active !== false]
     );
     return mapHealthTip(result.rows[0]);
 };
 
 exports.updateHealthTip = async (id, data) => {
-    const { title, excerpt, image, date, readTime, author, category, content, active } = data;
+    const { title, excerpt, image, videoUrl, date, readTime, author, category, content, active } = data;
     const result = await pool.query(
-        "UPDATE health_tips SET title = $1, excerpt = $2, image = $3, date = $4, read_time = $5, author = $6, category = $7, content = $8, active = $9, updated_at = NOW() WHERE id = $10 RETURNING *",
-        [title, excerpt, image, date, readTime, author, category, content, active !== false, id]
+        "UPDATE health_tips SET title = $1, excerpt = $2, image = $3, video_url = $4, date = $5, read_time = $6, author = $7, category = $8, content = $9, active = $10, updated_at = NOW() WHERE id = $11 RETURNING *",
+        [title, excerpt, image, videoUrl, date, readTime, author, category, content, active !== false, id]
     );
     return result.rows[0] ? mapHealthTip(result.rows[0]) : null;
 };
 
 exports.deleteHealthTip = async (id) => {
-    // 1. Get tip to find image URL
-    const tipResult = await pool.query("SELECT image FROM health_tips WHERE id = $1", [id]);
+    // 1. Get tip to find media URLs
+    const tipResult = await pool.query("SELECT image, video_url FROM health_tips WHERE id = $1", [id]);
     const tip = tipResult.rows[0];
 
-    // 2. Delete image from Supabase if exists
-    if (tip && tip.image) {
-        try {
-            await storageService.deleteImage(tip.image);
-        } catch (error) {
-            console.error("Error deleting health tip image from Supabase:", error);
+    // 2. Delete media from Supabase if exists
+    if (tip) {
+        if (tip.image) {
+            try {
+                await storageService.deleteImage(tip.image);
+            } catch (error) {
+                console.error("Error deleting health tip image from Supabase:", error);
+            }
+        }
+        if (tip.video_url) {
+            try {
+                await storageService.deleteImage(tip.video_url); // deleteImage is generic and handles any URL in the bucket
+            } catch (error) {
+                console.error("Error deleting health tip video from Supabase:", error);
+            }
         }
     }
 
