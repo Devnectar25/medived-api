@@ -37,6 +37,9 @@ if (require.main === module) {
         console.error('❌ Server startup error:', err);
         process.exit(1);
     });
+    
+    // Increase timeout for large file uploads (10 minutes)
+    server.timeout = 600000;
 } else {
     console.log('ℹ️ Server running in serverless/module mode');
 }

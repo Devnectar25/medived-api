@@ -40,6 +40,10 @@ app.use((req, res, next) => {
     next();
 });
 
+// ⭐ IMPORTANT: Upload routes must come BEFORE the manual body parser
+// to ensure the stream is not consumed or interfered with.
+app.use('/api/upload', uploadRoutes);
+
 // Manual JSON body parser to bypass express.json() crash on Vercel
 app.use((req, res, next) => {
     if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'PATCH') {
@@ -51,13 +55,10 @@ app.use((req, res, next) => {
         return next();
     }
 
-    // Skip manual parser for image uploads as they are handled by multer
-    if (req.url.includes('/upload-image')) {
-        return next();
-    }
-
     let data = '';
     const MAX_SIZE = 1 * 1024 * 1024; // 1MB limit
+// ... (omitting lines for brevity in match, but I will replace the whole block correctly)
+
 
     req.on('data', chunk => {
         data += chunk;
@@ -120,7 +121,6 @@ app.post('/api/admin/order/:id/restock', protect, authorize('admin'), orderContr
 app.use('/api/products', productRoutes);
 app.use('/api/brands', brandRoutes);
 app.use('/api/categories', categoryRoutes);
-app.use('/api/upload', uploadRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/subcategories', subcategoryRoutes);
 app.use('/api/health-tips', healthTipRoutes);

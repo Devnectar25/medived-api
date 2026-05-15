@@ -2,12 +2,29 @@ const supabase = require('../config/supabaseClient');
 
 const BUCKET_NAME = 'mediveda';
 
+const fs = require('fs');
+
 exports.uploadImage = async (file, folder = 'brand') => {
     try {
         if (!file || !file.originalname) {
             throw new Error('Invalid file: missing originalname');
         }
+        
+        // If it's a disk file (has path), use uploadFromFile
+        if (file.path) {
+            return await exports.uploadFromFile(file.path, `${folder}/${Date.now()}-${file.originalname}`, file.mimetype);
+        }
+
         return await exports.uploadBuffer(file.buffer, `${folder}/${Date.now()}-${Math.random().toString(36).substring(7)}`, file.mimetype || 'image/jpeg');
+    } catch (error) {
+        throw error;
+    }
+};
+
+exports.uploadFromFile = async (filePath, destinationPath, contentType) => {
+    try {
+        const fileBuffer = await fs.promises.readFile(filePath);
+        return await exports.uploadBuffer(fileBuffer, destinationPath, contentType);
     } catch (error) {
         throw error;
     }
@@ -26,7 +43,13 @@ exports.uploadBuffer = async (buffer, filePath, contentType = 'application/pdf')
             });
 
         if (error) {
-            throw new Error(`Supabase Upload Error: ${error.message}`);
+            console.error("Supabase Storage Error Details:", {
+                message: error.message,
+                name: error.name,
+                status: error.status,
+                stack: error.stack
+            });
+            throw new Error(`Supabase Upload Error: ${error.message} (${error.status || 'No status'})`);
         }
 
         const { data: publicUrlData } = supabase.storage
