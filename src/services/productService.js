@@ -169,6 +169,22 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
     params.push(limit);
 
     const result = await pool.query(query, params);
+    
+    // Fallback: if no related products are found in the same category, fetch any other active products
+    if (result.rows.length === 0) {
+        const fallbackQuery = `
+            SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
+            FROM products p
+            LEFT JOIN category c ON p.category_id = c.category_id
+            LEFT JOIN brand b ON p.brand = b.brand_id
+            LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
+            WHERE p.product_id != $1::integer AND p.active = true
+            LIMIT $2
+        `;
+        const fallbackResult = await pool.query(fallbackQuery, [productId, limit]);
+        return fallbackResult.rows.map(mapProduct);
+    }
+
     return result.rows.map(mapProduct);
 };
 
