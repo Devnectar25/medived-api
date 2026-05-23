@@ -47,6 +47,16 @@ exports.createReview = async (data) => {
         }
     }
 
+    // Check if the user has already rated/reviewed this product
+    const existingCheck = await pool.query(
+        "SELECT srno FROM review WHERE productid = $1 AND username = $2",
+        [productId, validUser]
+    );
+
+    if (existingCheck.rows.length > 0) {
+        throw new Error("You have already reviewed this product.");
+    }
+
     const result = await pool.query(
         `INSERT INTO review (productid, username, rating, review, date)
          VALUES ($1, $2, $3, $4, CURRENT_DATE)
