@@ -91,7 +91,8 @@ exports.socialCallback = async (req, res) => {
         res.redirect(`${clientUrl}/auth/callback?token=${token}&redirect=${encodeURIComponent(redirectPath)}&user=${encodeURIComponent(JSON.stringify({
             id: user.username,
             email: user.emailid,
-            fullName: user.username,
+            fullName: user.fullname || user.username,
+            memberSince: user.member_since,
             avatar: user.avatar_url
         }))}`);
     } catch (error) {
