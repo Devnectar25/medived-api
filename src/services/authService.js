@@ -77,7 +77,7 @@ exports.loginUser = async (email, password) => {
                 id: user.username,
                 userid: user.username,
                 email: user.emailid,
-                fullName: user.username,
+                fullName: user.fullname || user.username,
                 twoFactorEnabled: true
             }
         });
@@ -99,7 +99,7 @@ exports.loginUser = async (email, password) => {
             id: user.username,
             userid: user.username,
             email: user.emailid,
-            fullName: user.username,
+            fullName: user.fullname || user.username,
             memberSince: user.member_since,
             twoFactorEnabled: true
         },
@@ -139,8 +139,8 @@ exports.verifyOtp = async (email, otp) => {
         const username = userEmail;
 
         const result = await pool.query(
-            "INSERT INTO public.users (username, emailid, password, contactno, active, createdate, member_since) VALUES ($1, $2, $3, $4, true, NOW(), NOW()) RETURNING username, emailid, member_since",
-            [username, userEmail, password, phone]
+            "INSERT INTO public.users (username, emailid, password, contactno, active, createdate, member_since, fullname) VALUES ($1, $2, $3, $4, true, NOW(), NOW(), $5) RETURNING username, emailid, member_since, fullname",
+            [username, userEmail, password, phone, fullName]
         );
 
         const newUser = result.rows[0];
@@ -148,7 +148,7 @@ exports.verifyOtp = async (email, otp) => {
             id: newUser.username,
             userid: newUser.username,
             email: newUser.emailid,
-            fullName: fullName || newUser.username,
+            fullName: newUser.fullname || fullName || newUser.username,
             memberSince: newUser.member_since,
             twoFactorEnabled: true
         };
@@ -157,10 +157,11 @@ exports.verifyOtp = async (email, otp) => {
         console.log(`[verifyOtp Service] Processing login verification for email: ${email}`);
         // Login verification
         user = record.userData;
-        // Include memberSince for login as well
+        // Include memberSince and fullname for login as well
         const loginId = user.id || user.userid;
-        const loginResult = await pool.query("SELECT member_since FROM public.users WHERE username = $1", [loginId]);
+        const loginResult = await pool.query("SELECT member_since, fullname FROM public.users WHERE username = $1", [loginId]);
         user.memberSince = loginResult.rows[0]?.member_since;
+        user.fullName = loginResult.rows[0]?.fullname || user.fullName || loginId;
         token = generateToken(loginId, 'user');
     }
 

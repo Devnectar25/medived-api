@@ -42,3 +42,25 @@ exports.submitContactForm = async (req, res) => {
         });
     }
 };
+
+exports.getAllLeads = async (req, res) => {
+    try {
+        const query = `
+            SELECT id, name, email, subject, message, created_at
+            FROM contact_submissions
+            ORDER BY created_at DESC
+        `;
+        const result = await pool.query(query);
+
+        res.status(200).json({
+            success: true,
+            data: result.rows
+        });
+    } catch (err) {
+        console.error("Error fetching leads:", err);
+        res.status(500).json({
+            success: false,
+            error: "Internal server error"
+        });
+    }
+};

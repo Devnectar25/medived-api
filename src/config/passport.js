@@ -26,9 +26,10 @@ const handleSocialLogin = async (profile, provider, done) => {
                     user = result.rows[0];
                     // Use 'username' as the unique identifier for the WHERE clause
                     await pool.query(
-                        `UPDATE public.users SET ${provider}_id = $1, avatar_url = COALESCE(avatar_url, $2) WHERE username = $3`,
-                        [socialId, photoUrl, user.username]
+                        `UPDATE public.users SET ${provider}_id = $1, avatar_url = COALESCE(avatar_url, $2), fullname = COALESCE(fullname, $3) WHERE username = $4`,
+                        [socialId, photoUrl, profile.displayName, user.username]
                     );
+                    user.fullname = user.fullname || profile.displayName;
                 }
             }
         }
@@ -47,9 +48,9 @@ const handleSocialLogin = async (profile, provider, done) => {
             }
 
             const newUser = await pool.query(
-                `INSERT INTO public.users (username, emailid, password, active, createdate, member_since, ${provider}_id, avatar_url)
-                 VALUES ($1, $2, $3, true, NOW(), NOW(), $4, $5) RETURNING *`,
-                [finalUsername, email, 'social_login_placeholder', socialId, photoUrl]
+                `INSERT INTO public.users (username, emailid, password, active, createdate, member_since, ${provider}_id, avatar_url, fullname)
+                 VALUES ($1, $2, $3, true, NOW(), NOW(), $4, $5, $6) RETURNING *`,
+                [finalUsername, email, 'social_login_placeholder', socialId, photoUrl, profile.displayName]
             );
             user = newUser.rows[0];
         }
