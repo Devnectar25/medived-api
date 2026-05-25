@@ -157,11 +157,12 @@ exports.verifyOtp = async (email, otp) => {
         console.log(`[verifyOtp Service] Processing login verification for email: ${email}`);
         // Login verification
         user = record.userData;
-        // Include memberSince and fullname for login as well
+        // Include memberSince, fullname, and avatar for login as well
         const loginId = user.id || user.userid;
-        const loginResult = await pool.query("SELECT member_since, fullname FROM public.users WHERE username = $1", [loginId]);
+        const loginResult = await pool.query("SELECT member_since, fullname, avatar_url FROM public.users WHERE username = $1", [loginId]);
         user.memberSince = loginResult.rows[0]?.member_since;
         user.fullName = loginResult.rows[0]?.fullname || user.fullName || loginId;
+        user.avatar = loginResult.rows[0]?.avatar_url;
         token = generateToken(loginId, 'user');
     }
 

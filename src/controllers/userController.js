@@ -23,3 +23,47 @@ exports.getUsers = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to fetch users', error: error.message });
     }
 };
+
+exports.updateProfile = async (req, res) => {
+    try {
+        const { fullName, phone, avatar } = req.body;
+        const username = req.user.id;
+
+        if (!username) {
+            return res.status(401).json({ success: false, message: 'User not identified' });
+        }
+
+        if (avatar !== undefined && !avatar) {
+            return res.status(400).json({ success: false, message: 'Profile photo is compulsory' });
+        }
+
+        const result = await pool.query(`
+            UPDATE public.users
+            SET fullname = COALESCE($1, fullname),
+                contactno = COALESCE($2, contactno),
+                avatar_url = COALESCE($3, avatar_url)
+            WHERE username = $4
+            RETURNING username, emailid, fullname, contactno, avatar_url, member_since
+        `, [fullName, phone, avatar, username]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        const row = result.rows[0];
+        const updatedUser = {
+            id: row.username,
+            email: row.emailid,
+            fullName: row.fullname,
+            phone: row.contactno,
+            avatar: row.avatar_url,
+            memberSince: row.member_since,
+            twoFactorEnabled: true
+        };
+
+        res.json({ success: true, user: updatedUser });
+    } catch (error) {
+        console.error('Error updating user profile:', error);
+        res.status(500).json({ success: false, message: 'Failed to update profile', error: error.message });
+    }
+};
