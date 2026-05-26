@@ -281,16 +281,28 @@ exports.getCancelledOrders = async (options = {}) => {
                      ) items_data
                     ), '[]'::json
                 ) as items,
-                COALESCE(
-                    (SELECT 
-                        ROUND(
-                            SUM(price * quantity) - 
-                            ( (SUM(price * quantity) / NULLIF(o.subtotal, 0)) * COALESCE(o.discount_amount, 0) )
-                        , 2)
-                     FROM order_items 
-                     WHERE order_id = o.id AND (status = 'Cancelled' OR status = 'Returned' OR status = 'Return Approved' OR status = 'Return Request Processing' OR status = 'Cancellation Requested')
-                    ), 0
-                ) as refund_eligible_amount,
+                -- ── REFUND AMOUNT CALCULATION ───────────────────────────────────
+                -- Return orders: always use exact product price (sum of return item prices, no discount).
+                -- Cancellation orders: use stored refund_eligible_amount (discount-on-last-product rule).
+                CASE
+                    WHEN o.is_returned_order = TRUE THEN
+                        COALESCE(
+                            (SELECT ROUND(SUM(price * quantity), 2)
+                             FROM order_items
+                             WHERE order_id = o.id
+                               AND status IN ('Return Request Processing', 'Return Approved', 'Returned', 'Received at Homved', 'Refunded')
+                            ), 0
+                        )
+                    ELSE
+                        COALESCE(
+                            NULLIF(o.refund_eligible_amount, 0),
+                            (SELECT ROUND(SUM(price * quantity), 2)
+                             FROM order_items
+                             WHERE order_id = o.id
+                               AND status IN ('Cancelled', 'Cancellation Requested')
+                            ), 0
+                        )
+                END as refund_eligible_amount,
                 COALESCE(
                     (SELECT json_agg(i_data)
                      FROM (
@@ -641,7 +653,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
         await client.query('BEGIN');
 
         // Get current status to check for cancellation
-        const currentOrderRes = await client.query(`SELECT status, payment_method, is_product_received, payment_status, refund_status, logistics_status FROM orders WHERE id = $1`, [orderId]);
+        const currentOrderRes = await client.query(`SELECT * FROM orders WHERE id = $1`, [orderId]);
         if (currentOrderRes.rows.length === 0) throw new Error('Order not found');
 
         const oldOrder = currentOrderRes.rows[0];
@@ -720,6 +732,37 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             if (cancelledCount === totalCount) {
                 // All items cancelled -> update main order to status
                 status = 'Cancelled'; 
+                await client.query(
+                    `UPDATE orders 
+                     SET status = $2::text, 
+                         cancel_reason = CASE 
+                             WHEN $3::text IS NOT NULL AND $3::text <> '' THEN $3::text 
+                             ELSE COALESCE(cancel_reason, 'Not specified') 
+                         END,
+                         original_status = COALESCE(original_status, $4::text), 
+                         cancelled_at = NOW(), 
+                         updated_at = NOW(),
+                         refund_eligible_amount = CASE 
+                             WHEN status IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED') THEN COALESCE(refund_eligible_amount, 0)
+                             ELSE COALESCE(refund_eligible_amount, 0) + total
+                         END,
+                         refund_bank_account = COALESCE($5::text, refund_bank_account),
+                         refund_ifsc_code = COALESCE($6::text, refund_ifsc_code),
+                         refund_holder_name = COALESCE($7::text, refund_holder_name),
+                         refund_status = COALESCE(refund_status, 'Pending'),
+                         payment_status = COALESCE($8::text, payment_status)
+                     WHERE id = $1::uuid`,
+                    [
+                        orderId, 
+                        status, 
+                        cancelReason || null, 
+                        oldStatus || null,
+                        bankDetails?.accountNumber || null,
+                        bankDetails?.ifscCode || null,
+                        bankDetails?.holderName || null,
+                        paymentStatus || null
+                    ]
+                );
             } else {
                 // Calculate new subtotal for remaining active items
                 const subtotalResult = await client.query(
@@ -728,14 +771,22 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 );
                 const newSubtotal = parseFloat(subtotalResult.rows[0].new_subtotal || 0);
 
-                // Calculate proportional discount reduction and refund value
+                // ── DISCOUNT ON LAST PRODUCT RULE ─────────────────────────────
+                // The coupon discount is NOT split proportionally across cancelled items.
+                // Instead, the discount stays attached to the remaining active items.
+                // Only when the remaining subtotal drops below the discount amount does
+                // any excess discount get deducted from the refund value.
+                // This ensures earlier cancellations are refunded at full item price.
                 const cancelledSubtotal = Math.max(0, parseFloat(oldOrder.subtotal) - newSubtotal);
-                const originalSubtotal = parseFloat(oldOrder.subtotal) || 1;
                 const originalDiscount = parseFloat(oldOrder.discount_amount || 0);
-                
-                const proportionalDiscount = Math.round(((cancelledSubtotal / originalSubtotal) * originalDiscount) * 100) / 100;
-                const newDiscountAmount = Math.max(0, originalDiscount - proportionalDiscount);
-                const refundValue = Math.max(0, cancelledSubtotal - proportionalDiscount);
+
+                // How much discount can the remaining items still absorb?
+                // If remaining subtotal >= discount, all discount stays on remaining items → refund full cancelled amount.
+                // If remaining subtotal < discount, the excess spills into the refund deduction.
+                const discountAbsorbedByRemaining = Math.min(originalDiscount, newSubtotal);
+                const newDiscountAmount = discountAbsorbedByRemaining;
+                const discountSpillIntoRefund = Math.max(0, originalDiscount - discountAbsorbedByRemaining);
+                const refundValue = Math.max(0, cancelledSubtotal - discountSpillIntoRefund);
 
                 // Update order with new subtotal, discount, and re-calculate total
                 await client.query(
@@ -803,7 +854,10 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                                original_status = COALESCE(original_status, $4::text), 
                                cancelled_at = NOW(), 
                                updated_at = NOW(),
-                               refund_eligible_amount = total,
+                               refund_eligible_amount = CASE 
+                                   WHEN status IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED') THEN COALESCE(refund_eligible_amount, 0)
+                                   ELSE COALESCE(refund_eligible_amount, 0) + total
+                               END,
                                refund_bank_account = COALESCE($5::text, refund_bank_account),
                                refund_ifsc_code = COALESCE($6::text, refund_ifsc_code),
                                refund_holder_name = COALESCE($7::text, refund_holder_name),
@@ -833,8 +887,15 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             
             // Pre-calculate values to avoid complex CASE statements in SQL
             let refundStatusVal = oldOrder.refund_status;
-            if (status === 'Return Approved') refundStatusVal = 'Pending';
-            else if (status === 'Refunded') refundStatusVal = 'Refunded';
+            if (oldOrder.payment_status === 'Refunded') {
+                if (!['Refunded', 'Completed'].includes(refundStatusVal)) {
+                    refundStatusVal = 'Refunded';
+                }
+            } else if (status === 'Return Approved') {
+                refundStatusVal = 'Pending';
+            } else if (status === 'Refunded') {
+                refundStatusVal = 'Refunded';
+            }
 
             const productReceivedVal = (status === 'Received at Homved') ? true : oldIsProductReceived;
             const logisticsStatusVal = (status === 'Received at Homved') ? 'Received at Homved' : oldOrder.logistics_status;
@@ -1129,59 +1190,9 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
         }
 
         // ── AUTOMATED FINANCIAL REFUND (HOMVED-RR-07) ───────────────────
-        const isCancellationApproval = status === 'Cancelled' && oldOrder.status === 'Cancellation Requested';
-        const isReturnApproval = status === 'Return Approved';
-        const isPrepaid = oldOrder.payment_method?.toLowerCase() !== 'cod';
+        // NOTE: Automated Razorpay refund on Return Approval was removed from here.
+        // It has been moved to updateRefundStatus to process refunds through the Refund Desk.
 
-        if (isReturnApproval && isPrepaid && oldOrder.razorpay_payment_id) {
-            try {
-                let refundAmount = 0;
-                if (itemIds && itemIds.length > 0) {
-                    // Partial Refund: Sum of prices of approved items
-                    const ids = itemIds.map(i => i.id);
-                    const isUuid = typeof ids[0] === 'string' && ids[0].length === 36;
-                    let itemsRes;
-                    if (isUuid) {
-                        itemsRes = await client.query(
-                            `SELECT price, quantity FROM order_items WHERE order_id = $1::uuid AND id = ANY($2::uuid[])`,
-                            [orderId, ids]
-                        );
-                    } else {
-                        itemsRes = await client.query(
-                            `SELECT price, quantity FROM order_items WHERE order_id = $1::uuid AND product_id = ANY($2::integer[])`,
-                            [orderId, ids]
-                        );
-                    }
-                    refundAmount = itemsRes.rows.reduce((sum, item) => sum + (parseFloat(item.price) * parseInt(item.quantity)), 0);
-                } else {
-                    // Full Refund: Total order value
-                    refundAmount = parseFloat(oldOrder.total);
-                }
-
-                if (refundAmount > 0) {
-                    console.log(`[OrderService] Triggering Automated Refund: ${refundAmount} via Razorpay for Payment: ${oldOrder.razorpay_payment_id}`);
-                    await paymentService.refundPayment(oldOrder.razorpay_payment_id, refundAmount);
-                    
-                    // Log the refund in order history/notes if needed
-                    await client.query(
-                        `UPDATE orders SET 
-                            refund_status = 'Refunded',
-                            payment_status = 'Refunded',
-                            updated_at = NOW() 
-                         WHERE id = $1`,
-                        [orderId]
-                    );
-                }
-            } catch (refundError) {
-                console.error('[REFUND CRITICAL] Automated Razorpay refund failed:', refundError.message);
-                // We DON'T rollback the status change if refund fails (admin can retry manually),
-                // but we could add a note to the order.
-                await client.query(
-                    `UPDATE orders SET refund_status = 'Failed', updated_at = NOW() WHERE id = $1`,
-                    [orderId]
-                );
-            }
-        }
 
         await client.query('COMMIT');
         return order;
@@ -1199,16 +1210,71 @@ exports.updateRefundStatus = async (orderId, refundData) => {
     try {
         await client.query('BEGIN');
 
-        const orderQuery = await client.query(`SELECT payment_method, logistics_status, is_product_received FROM orders WHERE id = $1`, [orderId]);
+        const orderQuery = await client.query(`SELECT * FROM orders WHERE id = $1`, [orderId]);
         if (orderQuery.rows.length === 0) throw new Error('Order not found');
-        const orderInfo = orderQuery.rows[0];
-        const isOnline = orderInfo.payment_method?.toLowerCase() !== 'cod';
-        const oldIsProductReceived = orderInfo.is_product_received;
+        const oldOrder = orderQuery.rows[0];
+        const isOnline = oldOrder.payment_method?.toLowerCase() !== 'cod';
+        const oldIsProductReceived = oldOrder.is_product_received;
 
         const transitioningToFinal = refundStatus === 'Completed' || refundStatus === 'Refunded';
         
-        if (isOnline && transitioningToFinal && !txnId) {
-            throw new Error('Transaction ID is mandatory for finalizing online refunds.');
+        let finalTxnId = txnId;
+
+        if (isOnline && transitioningToFinal) {
+            const hasRazorpay = !!oldOrder.razorpay_payment_id;
+            const wantsAutoRefund = !txnId || txnId === 'AUTO' || txnId === 'Auto-Refund via Razorpay';
+
+            if (wantsAutoRefund) {
+                if (!hasRazorpay) {
+                    throw new Error('Automated refund failed: No Razorpay payment ID associated with this order.');
+                }
+                
+                // ── REFUND AMOUNT FOR RAZORPAY ───────────────────────────────────
+                // Return orders: use exact product price (sum of return item prices, no discount deduction).
+                // Cancellation orders: use stored refund_eligible_amount (discount-on-last-product rule).
+                let refundAmount = 0;
+                if (oldOrder.is_returned_order) {
+                    // Return: sum of return item prices only — exact product value
+                    const returnItemsRes = await client.query(
+                        `SELECT ROUND(SUM(price * quantity), 2) as total
+                         FROM order_items
+                         WHERE order_id = $1
+                           AND status IN ('Return Request Processing', 'Return Approved', 'Returned', 'Received at Homved', 'Refunded')`,
+                        [orderId]
+                    );
+                    refundAmount = parseFloat(returnItemsRes.rows[0]?.total || 0);
+                } else {
+                    // Cancellation: use stored refund_eligible_amount (discount-on-last-product formula)
+                    refundAmount = parseFloat(oldOrder.refund_eligible_amount || 0);
+                }
+                if (refundAmount <= 0) {
+                    refundAmount = parseFloat(oldOrder.total) || 0;
+                }
+
+                if (refundAmount > 0) {
+                    console.log(`[RefundDesk] Triggering automated Razorpay refund for order ${orderId}, amount: ${refundAmount}`);
+                    try {
+                        const refundResult = await paymentService.refundPayment(oldOrder.razorpay_payment_id, refundAmount);
+                        if (refundResult && refundResult.id) {
+                            finalTxnId = refundResult.id;
+                            console.log(`[RefundDesk] Razorpay refund initiated: ${finalTxnId}`);
+                        } else {
+                            // Razorpay not configured — treat as manual (admin will enter txn ID)
+                            finalTxnId = txnId || null;
+                            console.warn('[RefundDesk] Razorpay not configured, proceeding as manual refund.');
+                        }
+                    } catch (refundError) {
+                        const errMsg = refundError?.message || JSON.stringify(refundError) || 'Unknown error';
+                        console.error('[RefundDesk] Razorpay automated refund failed:', errMsg);
+                        // Surface a clean error to the admin instead of crashing with "undefined"
+                        throw new Error(`Razorpay refund failed: ${errMsg}`);
+                    }
+                } else {
+                    throw new Error('Cannot process refund: Refund amount is 0.');
+                }
+            } else if (!txnId) {
+                throw new Error('Transaction ID is mandatory for finalizing online refunds.');
+            }
         }
 
         // Whitelist valid refund statuses
@@ -1231,9 +1297,21 @@ exports.updateRefundStatus = async (orderId, refundData) => {
                                         WHEN $2::text IN ('Restocked') OR $7::text IN ('Received', 'Restocked', 'Received at Homved') THEN TRUE 
                                         ELSE is_product_received 
                                        END,
+                 payment_status = CASE 
+                                    WHEN $2::text IN ('Completed', 'Refunded') THEN 'Refunded' 
+                                    ELSE payment_status 
+                                  END,
                  status = CASE 
-                            WHEN $2::text IN ('Completed', 'Refunded', 'Success') THEN 'Refunded' 
-                            WHEN $2::text IN ('Rejected', 'Denied', 'Restocked') THEN 'Cancelled'
+                            WHEN $2::text IN ('Completed', 'Refunded', 'Success') AND NOT EXISTS (
+                                SELECT 1 FROM order_items 
+                                WHERE order_id = $1 
+                                  AND (status IS NULL OR status NOT IN ('Cancelled', 'Returned', 'Refunded', 'Return Approved', 'Replace Approved', 'Replaced'))
+                            ) THEN 'Refunded' 
+                            WHEN $2::text IN ('Rejected', 'Denied', 'Restocked') AND NOT EXISTS (
+                                SELECT 1 FROM order_items 
+                                WHERE order_id = $1 
+                                  AND (status IS NULL OR status NOT IN ('Cancelled', 'Returned', 'Refunded', 'Return Approved', 'Replace Approved', 'Replaced'))
+                            ) THEN 'Cancelled'
                             ELSE status 
                           END,
                  refund_bank_account = COALESCE($8::text, refund_bank_account),
@@ -1242,7 +1320,7 @@ exports.updateRefundStatus = async (orderId, refundData) => {
                  updated_at = NOW() 
              WHERE id = $1 
              RETURNING *`,
-            [orderId, refundStatus, adminNote, txnId || null, receiptUrl || null, notifyCustomer === true, refundData.logisticsStatus || null, refundData.bankDetails?.accountNumber || null, refundData.bankDetails?.ifscCode || null, refundData.bankDetails?.holderName || null]
+            [orderId, refundStatus, adminNote, finalTxnId || null, receiptUrl || null, notifyCustomer === true, refundData.logisticsStatus || null, refundData.bankDetails?.accountNumber || null, refundData.bankDetails?.ifscCode || null, refundData.bankDetails?.holderName || null]
         );
 
         if (updateResult.rows.length === 0) throw new Error('Order not found');

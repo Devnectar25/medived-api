@@ -197,7 +197,12 @@ exports.refundPayment = async (paymentId, amount, speed = 'normal') => {
         console.log(`[PaymentService] Refund successful: ${refund.id}`);
         return refund;
     } catch (error) {
-        console.error('[PaymentService] Razorpay refund failed:', error);
-        throw error;
+        // Razorpay SDK errors carry the description in error.error.description, not error.message
+        const razorpayDesc = error?.error?.description || error?.description;
+        const readableMsg = razorpayDesc || error?.message || JSON.stringify(error) || 'Unknown Razorpay error';
+        console.error('[PaymentService] Razorpay refund failed:', readableMsg);
+        const cleanErr = new Error(readableMsg);
+        cleanErr.razorpayError = error; // preserve original for debugging
+        throw cleanErr;
     }
 };
