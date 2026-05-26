@@ -19,6 +19,12 @@ console.log('CWD:', process.cwd());
 let app;
 try {
     require('dotenv').config();
+    
+    // Override old demo redirect URL with new production store URL
+    if (process.env.CLIENT_URL === 'https://demo.devnectar.in' || process.env.CLIENT_URL === 'http://demo.devnectar.in') {
+        process.env.CLIENT_URL = 'http://www.store.homved.com';
+    }
+
     app = require('./app');
     console.log('✅ App module loaded successfully');
 } catch (err) {
