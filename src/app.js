@@ -1,3 +1,8 @@
+// Override old demo redirect URL with new production store URL
+if (process.env.CLIENT_URL === 'https://demo.devnectar.in' || process.env.CLIENT_URL === 'http://demo.devnectar.in') {
+    process.env.CLIENT_URL = 'http://www.store.homved.com';
+}
+
 const express = require('express');
 const session = require('express-session');
 const passport = require('./config/passport'); // Social login configuration
@@ -57,7 +62,7 @@ app.use((req, res, next) => {
 
     let data = '';
     const MAX_SIZE = 1 * 1024 * 1024; // 1MB limit
-// ... (omitting lines for brevity in match, but I will replace the whole block correctly)
+    // ... (omitting lines for brevity in match, but I will replace the whole block correctly)
 
 
     req.on('data', chunk => {

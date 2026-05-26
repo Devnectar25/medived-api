@@ -71,3 +71,6 @@ The frontend services required for this application are maintained in the follow
 
 - Frontend Repository: <https://github.com/Devnectar25/reactshop-home>
 
+## Deployment Status
+- Last deployment trigger: 2026-05-26 (Manual redeploy trigger)
+
