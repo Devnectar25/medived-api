@@ -1,3 +1,8 @@
+// Override old demo redirect URL with new production store URL
+if (!process.env.CLIENT_URL || process.env.CLIENT_URL.includes('localhost') || process.env.CLIENT_URL.includes('demo.devnectar.in')) {
+    process.env.CLIENT_URL = 'http://www.store.homved.com';
+}
+
 const express = require('express');
 const session = require('express-session');
 const passport = require('./config/passport'); // Social login configuration
