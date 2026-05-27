@@ -1,5 +1,6 @@
 const authService = require('../services/authService');
 const jwt = require('jsonwebtoken');
+const { getClientUrl } = require('../utils/urlHelper');
 
 
 exports.register = async (req, res) => {
@@ -87,7 +88,9 @@ exports.socialCallback = async (req, res) => {
         console.log(`[socialCallback] Redirecting to: ${redirectPath}`);
         delete req.session.returnTo;
 
-        const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+        const clientUrl = req.session.clientUrl || getClientUrl(req);
+        delete req.session.clientUrl; // clean up session
+
         res.redirect(`${clientUrl}/auth/callback?token=${token}&redirect=${encodeURIComponent(redirectPath)}&user=${encodeURIComponent(JSON.stringify({
             id: user.username,
             email: user.emailid,
@@ -97,7 +100,9 @@ exports.socialCallback = async (req, res) => {
         }))}`);
     } catch (error) {
         console.error("Social Auth Error:", error);
-        res.redirect(`${process.env.CLIENT_URL || 'http://localhost:5173'}/auth?error=SocialLoginFailed`);
+        const clientUrl = req.session?.clientUrl || getClientUrl(req);
+        delete req.session?.clientUrl; // clean up session if present
+        res.redirect(`${clientUrl}/auth?error=SocialLoginFailed`);
     }
 };
 
