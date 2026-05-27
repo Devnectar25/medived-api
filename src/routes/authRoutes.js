@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const authController = require('../controllers/authController');
 const subAdminController = require('../controllers/subAdminController');
 const { protect, authorize } = require('../middlewares/authMiddleware');
+const { getClientUrl } = require('../utils/urlHelper');
 
 
 router.post('/register', authController.register);
@@ -31,6 +32,8 @@ router.get('/google', (req, res, next) => {
     if (req.query.redirect) {
         req.session.returnTo = req.query.redirect;
     }
+    // Dynamically resolve client URL and store in session
+    req.session.clientUrl = getClientUrl(req);
     req.session.save((err) => {
         if (err) return next(err);
         passport.authenticate('google', { scope: ['profile', 'email'], state })(req, res, next);
@@ -40,15 +43,16 @@ router.get('/google', (req, res, next) => {
 router.get('/google/callback', (req, res, next) => {
     const receivedState = req.query.state;
     const storedState = req.session?.oauth_state;
+    const clientUrl = req.session?.clientUrl || getClientUrl(req);
 
     if (!receivedState || !storedState || receivedState !== storedState) {
-        return res.redirect(`${process.env.CLIENT_URL}/auth?error=state_mismatch`);
+        return res.redirect(`${clientUrl}/auth?error=state_mismatch`);
     }
 
     delete req.session.oauth_state;
 
     passport.authenticate('google', {
-        failureRedirect: `${process.env.CLIENT_URL}/auth?error=google_auth_failed`
+        failureRedirect: `${clientUrl}/auth?error=google_auth_failed`
     })(req, res, next);
 }, authController.socialCallback);
 
@@ -61,6 +65,8 @@ router.get('/facebook', (req, res, next) => {
     if (req.query.redirect) {
         req.session.returnTo = req.query.redirect;
     }
+    // Dynamically resolve client URL and store in session
+    req.session.clientUrl = getClientUrl(req);
     req.session.save((err) => {
         if (err) return next(err);
         passport.authenticate('facebook', { scope: ['email'], state })(req, res, next);
@@ -70,15 +76,16 @@ router.get('/facebook', (req, res, next) => {
 router.get('/facebook/callback', (req, res, next) => {
     const receivedState = req.query.state;
     const storedState = req.session?.oauth_state_facebook;
+    const clientUrl = req.session?.clientUrl || getClientUrl(req);
 
     if (!receivedState || !storedState || receivedState !== storedState) {
-        return res.redirect(`${process.env.CLIENT_URL}/auth?error=state_mismatch`);
+        return res.redirect(`${clientUrl}/auth?error=state_mismatch`);
     }
 
     delete req.session.oauth_state_facebook;
 
     passport.authenticate('facebook', {
-        failureRedirect: `${process.env.CLIENT_URL}/auth?error=facebook_auth_failed`
+        failureRedirect: `${clientUrl}/auth?error=facebook_auth_failed`
     })(req, res, next);
 }, authController.socialCallback);
 
