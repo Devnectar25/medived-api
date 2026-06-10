@@ -745,8 +745,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 // Determine stock adjustment
                 // If moving TO a cancelled state from a non-cancelled state -> Restore stock (+)
                 // If moving FROM a cancelled state to a non-cancelled state -> Reduce stock (-)
-                const isCancelling = (status === 'Cancelled' || status === 'Cancellation Requested' || status === 'CANCEL_REQUESTED' || status === 'CANCEL_APPROVED' || status === 'Return Approved' || status === 'Returned' || status === 'Refunded');
-                const wasCancelling = (originalItem.status === 'Cancelled' || originalItem.status === 'Cancellation Requested' || originalItem.status === 'CANCEL_REQUESTED' || originalItem.status === 'CANCEL_APPROVED' || originalItem.status === 'Return Approved' || originalItem.status === 'Returned' || originalItem.status === 'Refunded');
+                const isCancelling = (status === 'Cancelled' || status === 'CANCEL_APPROVED' || status === 'Return Approved' || status === 'Returned' || status === 'Refunded');
+                const wasCancelling = (originalItem.status === 'Cancelled' || originalItem.status === 'CANCEL_APPROVED' || originalItem.status === 'Return Approved' || originalItem.status === 'Returned' || originalItem.status === 'Refunded');
 
                 let stockAdjustment = 0;
                 if (isCancelling && !wasCancelling) {
@@ -1446,6 +1446,23 @@ exports.updateRefundStatus = async (orderId, refundData) => {
 
         if (updateResult.rows.length === 0) throw new Error('Order not found');
         const order = updateResult.rows[0];
+
+        // Synchronize return item statuses on refund completion/restocking
+        if (transitioningToFinal) {
+            await client.query(
+                `UPDATE order_items 
+                 SET status = 'Refunded' 
+                 WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                [orderId]
+            );
+        } else if (refundStatus === 'Restocked') {
+            await client.query(
+                `UPDATE order_items 
+                 SET status = 'Returned' 
+                 WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                [orderId]
+            );
+        }
 
         // INVENTORY AUTOMATION (Based on Logistics)
         const newLogistics = order.logistics_status;
