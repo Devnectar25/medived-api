@@ -33,8 +33,8 @@ exports.updateProfile = async (req, res) => {
             return res.status(401).json({ success: false, message: 'User not identified' });
         }
 
-        if (avatar !== undefined && !avatar) {
-            return res.status(400).json({ success: false, message: 'Profile photo is compulsory' });
+        if (phone !== undefined && (!phone || !phone.trim())) {
+            return res.status(400).json({ success: false, message: 'Mobile number is required' });
         }
 
         const result = await pool.query(`
@@ -44,7 +44,7 @@ exports.updateProfile = async (req, res) => {
                 avatar_url = COALESCE($3, avatar_url)
             WHERE username = $4
             RETURNING username, emailid, fullname, contactno, avatar_url, member_since
-        `, [fullName, phone, avatar, username]);
+        `, [fullName || null, phone || null, avatar || null, username]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, message: 'User not found' });

@@ -38,9 +38,29 @@ exports.getAllHealthTips = async (page, limit) => {
     return result.rows.map(mapHealthTip);
 };
 
+const slugify = (text) => {
+    if (!text) return "";
+    return text
+        .toString()
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, '-')
+        .replace(/[^\w\-]+/g, '')
+        .replace(/\-\-+/g, '-');
+};
+
 exports.getHealthTipById = async (id) => {
-    const result = await pool.query("SELECT * FROM health_tips WHERE id = $1", [id]);
-    return result.rows[0] ? mapHealthTip(result.rows[0]) : null;
+    const numId = parseInt(id, 10);
+    if (!isNaN(numId) && numId.toString() === id.toString()) {
+        const result = await pool.query("SELECT * FROM health_tips WHERE id = $1", [numId]);
+        return result.rows[0] ? mapHealthTip(result.rows[0]) : null;
+    } else {
+        const decodedTitle = decodeURIComponent(id);
+        const slug = slugify(decodedTitle);
+        const result = await pool.query("SELECT * FROM health_tips");
+        const matchingTip = result.rows.find(t => slugify(t.title) === slug);
+        return matchingTip ? mapHealthTip(matchingTip) : null;
+    }
 };
 
 exports.createHealthTip = async (data) => {

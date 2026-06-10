@@ -169,23 +169,33 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
     params.push(limit);
 
     const result = await pool.query(query, params);
-    
-    // Fallback: if no related products are found in the same category, fetch any other active products
-    if (result.rows.length === 0) {
-        const fallbackQuery = `
+    let related = result.rows || [];
+
+    // If we have fewer products than the limit, fill the rest with other active products
+    if (related.length < limit) {
+        const extraLimit = limit - related.length;
+        const alreadyFetchedIds = related.map(p => parseInt(p.product_id)).concat(parseInt(productId));
+
+        const extraQuery = `
             SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
             FROM products p
             LEFT JOIN category c ON p.category_id = c.category_id
             LEFT JOIN brand b ON p.brand = b.brand_id
             LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
-            WHERE p.product_id != $1::integer AND p.active = true
-            LIMIT $2
+            WHERE p.active = true AND p.product_id NOT IN (${alreadyFetchedIds.map((_, i) => `$${i + 1}`).join(',')})
+            ORDER BY p.promoted DESC, p.rating DESC NULLS LAST
+            LIMIT $${alreadyFetchedIds.length + 1}
         `;
-        const fallbackResult = await pool.query(fallbackQuery, [productId, limit]);
-        return fallbackResult.rows.map(mapProduct);
+
+        try {
+            const extraResult = await pool.query(extraQuery, [...alreadyFetchedIds, extraLimit]);
+            related = related.concat(extraResult.rows || []);
+        } catch (e) {
+            console.error("Error fetching extra related products:", e);
+        }
     }
 
-    return result.rows.map(mapProduct);
+    return related.map(mapProduct);
 };
 
 exports.createProduct = async (product) => {

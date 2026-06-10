@@ -23,6 +23,10 @@ const generateOTP = () => {
 exports.registerUser = async (data) => {
     const { email, password, fullName, phone } = data;
 
+    if (!phone || !phone.trim()) {
+        throw new Error("Mobile number is required");
+    }
+
     // Check if user already exists
     const existingUser = await pool.query("SELECT * FROM public.users WHERE emailid = $1 OR username = $1", [email]);
     if (existingUser.rows.length > 0) {
