@@ -220,6 +220,12 @@ exports.getAllOrders = async (options = {}) => {
         paramIndex++;
     }
 
+    if (options.orderNumber) {
+        baseQuery += ` AND (o.order_number ILIKE $${paramIndex} OR o.id::text ILIKE $${paramIndex})`;
+        params.push(`%${options.orderNumber}%`);
+        paramIndex++;
+    }
+
     const countResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, params);
     const totalCount = parseInt(countResult.rows[0].count);
 
@@ -250,9 +256,10 @@ exports.getAllOrders = async (options = {}) => {
 };
 
 exports.getCancelledOrders = async (options = {}) => {
-    const { limit = 10, offset = 0 } = options;
+    const { limit = 10, offset = 0, refundStatusFilter = 'active', searchTerm } = options;
 
-    const baseQuery = `FROM orders o 
+    const queryParams = [];
+    let baseQuery = `FROM orders o 
                      LEFT JOIN users u ON o.user_id = u.username 
                      LEFT JOIN user_addresses a ON o.address_id = a.id 
                      WHERE (
@@ -268,7 +275,40 @@ exports.getCancelledOrders = async (options = {}) => {
                         OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND (oi.status LIKE 'Return%' OR oi.status LIKE 'Replace%'))
                      )`;
 
-    const countResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`);
+    if (searchTerm) {
+        baseQuery += ` AND (o.order_number ILIKE $1 OR u.emailid ILIKE $1 OR u.contactno ILIKE $1 OR a.full_address ILIKE $1)`;
+        queryParams.push(`%${searchTerm}%`);
+    }
+
+    const paramOffsetIndex = queryParams.length + 1;
+
+    // ── Refund Desk specific filtering ──────────────────────────────────────
+    if (refundStatusFilter === 'active') {
+        // Only show orders that are actively being processed for a refund.
+        // Exclude: already Refunded/Completed, and Pending-refund orders
+        // whose order hasn't been admin-approved yet.
+        baseQuery += `
+                     AND (o.refund_status IS NULL OR o.refund_status NOT IN ('Refunded', 'Completed'))
+                     AND NOT (
+                         (o.refund_status = 'Pending' OR o.refund_status IS NULL)
+                         AND o.status IN (
+                             'Cancellation Requested', 'CANCEL_REQUESTED',
+                             'Return Request Processing', 'Replacement Request Processing'
+                         )
+                     )`;
+    } else if (refundStatusFilter && refundStatusFilter !== 'All') {
+        // Explicit single-status filter (Pending, In-Review, Processing, Refunded, Rejected)
+        if (refundStatusFilter === 'Pending') {
+            baseQuery += ` AND (o.refund_status = 'Pending' OR o.refund_status IS NULL)`;
+        } else {
+            baseQuery += ` AND o.refund_status = '${refundStatusFilter.replace(/'/g, "''")}'`;
+        }
+    }
+    // 'All' = no extra filter, return everything
+
+
+
+    const countResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, queryParams);
     const totalCount = parseInt(countResult.rows[0].count);
 
     const orderResult = await pool.query(
@@ -312,9 +352,15 @@ exports.getCancelledOrders = async (options = {}) => {
                     ), '[]'::json
                 ) as refund_items
          ${baseQuery}
-         ORDER BY o.updated_at DESC
-         LIMIT $1 OFFSET $2`,
-        [limit, offset]
+         ORDER BY 
+            CASE 
+              WHEN o.status IN ('Cancelled', 'Partially Cancelled', 'Return Approved', 'Received at Homved', 'Returned', 'Refunded', 'Replace Approved', 'Replaced') 
+                   OR EXISTS (SELECT 1 FROM order_items WHERE order_id = o.id AND status IN ('Cancelled', 'Returned', 'Refunded', 'Return Approved', 'Replace Approved', 'Replaced')) THEN 1 
+              ELSE 2 
+            END ASC,
+            o.updated_at DESC
+         LIMIT $${paramOffsetIndex} OFFSET $${paramOffsetIndex + 1}`,
+        [...queryParams, limit, offset]
     );
 
     return {
@@ -699,8 +745,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 // Determine stock adjustment
                 // If moving TO a cancelled state from a non-cancelled state -> Restore stock (+)
                 // If moving FROM a cancelled state to a non-cancelled state -> Reduce stock (-)
-                const isCancelling = (status === 'Cancelled' || status === 'Cancellation Requested' || status === 'CANCEL_REQUESTED' || status === 'CANCEL_APPROVED' || status === 'Return Approved' || status === 'Returned' || status === 'Refunded');
-                const wasCancelling = (originalItem.status === 'Cancelled' || originalItem.status === 'Cancellation Requested' || originalItem.status === 'CANCEL_REQUESTED' || originalItem.status === 'CANCEL_APPROVED' || originalItem.status === 'Return Approved' || originalItem.status === 'Returned' || originalItem.status === 'Refunded');
+                const isCancelling = (status === 'Cancelled' || status === 'CANCEL_APPROVED' || status === 'Return Approved' || status === 'Returned' || status === 'Refunded');
+                const wasCancelling = (originalItem.status === 'Cancelled' || originalItem.status === 'CANCEL_APPROVED' || originalItem.status === 'Return Approved' || originalItem.status === 'Returned' || originalItem.status === 'Refunded');
 
                 let stockAdjustment = 0;
                 if (isCancelling && !wasCancelling) {
@@ -763,6 +809,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         paymentStatus || null
                     ]
                 );
+                await client.query('COMMIT');
+                return await exports.getOrderById(orderId);
             } else {
                 // Calculate new subtotal for remaining active items
                 const subtotalResult = await client.query(
@@ -796,10 +844,13 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         total = GREATEST(0, $2::numeric + COALESCE(shipping, 0) - $10::numeric),
                         refund_eligible_amount = COALESCE(refund_eligible_amount, 0) + $9::numeric,
                         status = CASE 
+                            WHEN $7::text = 'Cancelled' THEN 'Partially Cancelled'
                             WHEN $7::text = 'Cancellation Requested' THEN 'Cancellation Requested'
                             WHEN status = 'Cancellation Requested' THEN $7::text
                             WHEN $7::text IN (
-                                'Return Request Processing', 'Return Approved', 'Return Rejected', 
+                                'Return Request Processing', 'Return Approved', 'Return Processing', 
+                                'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked', 
+                                'Return Rejected', 'Return/Replace Pending',
                                 'Replace Requested', 'Replacement Request Processing', 'Replace Approved', 
                                 'Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery', 
                                 'Delivered', 'Replaced'
@@ -808,6 +859,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         END,
                         original_status = CASE 
                             WHEN $7::text = 'Cancellation Requested' THEN COALESCE(original_status, status)
+                            WHEN $7::text = 'Cancelled' THEN COALESCE(original_status, status)
                             WHEN status = 'Cancellation Requested' THEN NULL
                             ELSE original_status
                         END,
@@ -942,6 +994,11 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                            refund_status = $4::text,
                            is_product_received = $5::boolean,
                            logistics_status = $6::text,
+                           payment_status = CASE 
+                                              WHEN $2::text = 'Refunded' THEN 'Refunded'
+                                              WHEN $7::text IS NOT NULL THEN $7::text
+                                              ELSE payment_status 
+                                            END,
                            updated_at = NOW() 
                            WHERE id = $1::uuid RETURNING *`;
             updateParams = [
@@ -950,7 +1007,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 isRejected ? (cancelReason || 'Administrative decision') : null,
                 refundStatusVal,
                 productReceivedVal,
-                logisticsStatusVal
+                logisticsStatusVal,
+                paymentStatus || null
             ];
             
             if (status === 'Replace Approved') {
@@ -1016,6 +1074,53 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
         }
 
         const updateResult = await client.query(updateQuery, updateParams);
+
+        // Fallback for Return/Replace item statuses when itemIds is NOT provided
+        if (!itemIds || itemIds.length === 0) {
+            if (status === 'Return Approved') {
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = 'Return Approved' 
+                     WHERE order_id = $1 AND (status = 'Return Request Processing' OR status = 'Return Requested')`,
+                    [orderId]
+                );
+            } else if (status === 'Return Rejected') {
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = 'Return Rejected' 
+                     WHERE order_id = $1 AND (status = 'Return Request Processing' OR status = 'Return Requested')`,
+                    [orderId]
+                );
+            } else if (status === 'Replace Rejected') {
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = 'Replace Rejected' 
+                     WHERE order_id = $1 AND (status = 'Replacement Request Processing' OR status = 'Replace Requested')`,
+                    [orderId]
+                );
+            } else if (status === 'Received at Homved') {
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = 'Received at Homved' 
+                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                    [orderId]
+                );
+            } else if (status === 'Refunded') {
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = 'Refunded' 
+                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                    [orderId]
+                );
+            } else if (status === 'Returned') {
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = 'Returned' 
+                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                    [orderId]
+                );
+            }
+        }
 
         // Sync all items to the same status if order status changed (standard delivery cycle sync)
         // EXCEPTION: Do not sync items that are 'Cancelled' or in a Return/Replace process
@@ -1224,10 +1329,11 @@ exports.updateRefundStatus = async (orderId, refundData) => {
             const hasRazorpay = !!oldOrder.razorpay_payment_id;
             const wantsAutoRefund = !txnId || txnId === 'AUTO' || txnId === 'Auto-Refund via Razorpay';
 
-            if (wantsAutoRefund) {
-                if (!hasRazorpay) {
-                    throw new Error('Automated refund failed: No Razorpay payment ID associated with this order.');
-                }
+            if (wantsAutoRefund && !hasRazorpay) {
+                // Fallback to manual transaction ID if no Razorpay payment ID is associated
+                finalTxnId = 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+                console.log(`[RefundDesk] No Razorpay payment ID associated with online order. Defaulting to manual transaction ID: ${finalTxnId}`);
+            } else if (wantsAutoRefund) {
                 
                 // ── REFUND AMOUNT FOR RAZORPAY ───────────────────────────────────
                 // Return orders: use exact product price (sum of return item prices, no discount deduction).
@@ -1298,19 +1404,36 @@ exports.updateRefundStatus = async (orderId, refundData) => {
                                         ELSE is_product_received 
                                        END,
                  payment_status = CASE 
-                                    WHEN $2::text IN ('Completed', 'Refunded') THEN 'Refunded' 
-                                    ELSE payment_status 
-                                  END,
+                                     WHEN $2::text IN ('Completed', 'Refunded') AND NOT EXISTS (
+                                         SELECT 1 FROM order_items 
+                                         WHERE order_id = $1 
+                                           AND (status IS NULL OR status NOT IN (
+                                               'Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'CANCEL_APPROVED',
+                                               'Return Requested', 'Return Request Processing', 'Return Approved', 'Return Processing', 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked',
+                                               'Replace Requested', 'Replacement Request Processing', 'Replace Approved', 'Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery', 'Replaced'
+                                           ))
+                                     ) THEN 'Refunded'
+                                     WHEN $2::text IN ('Completed', 'Refunded') THEN 'Paid'
+                                     ELSE payment_status 
+                                   END,
                  status = CASE 
                             WHEN $2::text IN ('Completed', 'Refunded', 'Success') AND NOT EXISTS (
                                 SELECT 1 FROM order_items 
                                 WHERE order_id = $1 
-                                  AND (status IS NULL OR status NOT IN ('Cancelled', 'Returned', 'Refunded', 'Return Approved', 'Replace Approved', 'Replaced'))
+                                  AND (status IS NULL OR status NOT IN (
+                                      'Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'CANCEL_APPROVED',
+                                      'Return Requested', 'Return Request Processing', 'Return Approved', 'Return Processing', 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked',
+                                      'Replace Requested', 'Replacement Request Processing', 'Replace Approved', 'Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery', 'Replaced'
+                                  ))
                             ) THEN 'Refunded' 
                             WHEN $2::text IN ('Rejected', 'Denied', 'Restocked') AND NOT EXISTS (
                                 SELECT 1 FROM order_items 
                                 WHERE order_id = $1 
-                                  AND (status IS NULL OR status NOT IN ('Cancelled', 'Returned', 'Refunded', 'Return Approved', 'Replace Approved', 'Replaced'))
+                                  AND (status IS NULL OR status NOT IN (
+                                      'Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'CANCEL_APPROVED',
+                                      'Return Requested', 'Return Request Processing', 'Return Approved', 'Return Processing', 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked',
+                                      'Replace Requested', 'Replacement Request Processing', 'Replace Approved', 'Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery', 'Replaced'
+                                  ))
                             ) THEN 'Cancelled'
                             ELSE status 
                           END,
@@ -1326,10 +1449,27 @@ exports.updateRefundStatus = async (orderId, refundData) => {
         if (updateResult.rows.length === 0) throw new Error('Order not found');
         const order = updateResult.rows[0];
 
+        // Synchronize return item statuses on refund completion/restocking
+        if (transitioningToFinal) {
+            await client.query(
+                `UPDATE order_items 
+                 SET status = 'Refunded' 
+                 WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                [orderId]
+            );
+        } else if (refundStatus === 'Restocked') {
+            await client.query(
+                `UPDATE order_items 
+                 SET status = 'Returned' 
+                 WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                [orderId]
+            );
+        }
+
         // INVENTORY AUTOMATION (Based on Logistics)
         const newLogistics = order.logistics_status;
         const reachedReceived = (newLogistics === 'Received' || newLogistics === 'Received at Homved' || newLogistics === 'Restocked' || refundStatus === 'Restocked') && 
-                                !orderInfo.is_product_received;
+                                !oldIsProductReceived;
 
         if (reachedReceived) {
             const itemsResult = await client.query(`SELECT product_id, quantity FROM order_items WHERE order_id = $1`, [orderId]);

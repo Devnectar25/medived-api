@@ -373,7 +373,7 @@ function detectProductListingIntent(query) {
 
     // ── Direct single word listing (e.g. "ayurvedic", "herbal") ────────────────
     const singleWords = q.split(/\s+/);
-    if (singleWords.length === 1 && !skipKeywords.has(singleWords[0]) && singleWords[0].length > 3) {
+    if (singleWords.length === 1 && !skipKeywords.has(singleWords[0]) && singleWords[0].length >= 3) {
         // Check if it's a known intent like 'greeting' etc.
         const { intent } = detectIntentFromTokens([singleWords[0]]);
         if (intent === 'unknown' || intent === 'product_search') {
@@ -968,7 +968,7 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
             // Use the provided keyword from DB, or extract from query if it's long enough.
             const keyword = entry.keywords && entry.keywords.length > 0
                 ? entry.keywords[0]
-                : (sanitizedQuery.length > 3 ? sanitizedQuery : null);
+                : (sanitizedQuery.length >= 3 ? sanitizedQuery : null);
 
             // Fetch products if there is any meaningful keyword associated with the knowledge base entry.
             // This ensures questions about "immunity" will suggest immunity products alongside the helpful answer.

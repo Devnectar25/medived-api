@@ -21,8 +21,9 @@ exports.getAllOrders = async (req, res) => {
         const paymentStatus = req.query.paymentStatus;
         const type = req.query.type;
         const userName = req.query.userName;
+        const orderNumber = req.query.orderNumber;
 
-        const result = await orderService.getAllOrders({ limit, offset, status, paymentStatus, type, userName });
+        const result = await orderService.getAllOrders({ limit, offset, status, paymentStatus, type, userName, orderNumber });
         res.status(200).json({
             success: true,
             data: result.orders,
@@ -43,9 +44,11 @@ exports.getCancelledOrders = async (req, res) => {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
+        const refundStatusFilter = req.query.refundStatusFilter || 'active';
+        const searchTerm = req.query.searchTerm;
 
-        const result = await orderService.getCancelledOrders({ limit, offset });
-        console.log(`[GET CANCELLED] Sending response with ${result.orders.length} orders`);
+        const result = await orderService.getCancelledOrders({ limit, offset, refundStatusFilter, searchTerm });
+        console.log(`[GET CANCELLED] Sending response with ${result.orders.length} orders (refundFilter: ${refundStatusFilter})`);
         res.status(200).json({
             success: true,
             data: result.orders,

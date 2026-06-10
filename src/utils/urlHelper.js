@@ -18,26 +18,30 @@ function getClientUrl(req) {
         }
     }
 
-    // 2. Check Origin header (sent by browsers for fetch/XHR CORS requests)
+    // 2. Fallback to process.env.CLIENT_URL if defined
+    if (process.env.CLIENT_URL) {
+        let clientUrl = process.env.CLIENT_URL;
+        return clientUrl.endsWith('/') ? clientUrl.slice(0, -1) : clientUrl;
+    }
+
+    // 3. Check Origin header (sent by browsers for fetch/XHR CORS requests)
     if (req && req.headers && req.headers.origin) {
         let origin = req.headers.origin;
         return origin.endsWith('/') ? origin.slice(0, -1) : origin;
     }
 
-    // 3. Check Referer header (fallback for standard link redirects)
+    // 4. Check Referer header (fallback for standard link redirects)
     if (req && req.headers && req.headers.referer) {
         try {
             const parsed = new URL(req.headers.referer);
-            return parsed.origin;
+            const origin = parsed.origin;
+            // Exclude social OAuth hosts to avoid redirecting JWT tokens to external domains
+            if (!origin.includes('google.com') && !origin.includes('facebook.com')) {
+                return origin;
+            }
         } catch (e) {
             // Ignore malformed referer headers
         }
-    }
-
-    // 4. Fallback to process.env.CLIENT_URL if defined
-    if (process.env.CLIENT_URL) {
-        let clientUrl = process.env.CLIENT_URL;
-        return clientUrl.endsWith('/') ? clientUrl.slice(0, -1) : clientUrl;
     }
 
     // 5. Default fallback for development environment
