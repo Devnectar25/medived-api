@@ -220,6 +220,12 @@ exports.getAllOrders = async (options = {}) => {
         paramIndex++;
     }
 
+    if (options.orderNumber) {
+        baseQuery += ` AND (o.order_number ILIKE $${paramIndex} OR o.id::text ILIKE $${paramIndex})`;
+        params.push(`%${options.orderNumber}%`);
+        paramIndex++;
+    }
+
     const countResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, params);
     const totalCount = parseInt(countResult.rows[0].count);
 
@@ -250,9 +256,10 @@ exports.getAllOrders = async (options = {}) => {
 };
 
 exports.getCancelledOrders = async (options = {}) => {
-    const { limit = 10, offset = 0 } = options;
+    const { limit = 10, offset = 0, refundStatusFilter = 'active', searchTerm } = options;
 
-    const baseQuery = `FROM orders o 
+    const queryParams = [];
+    let baseQuery = `FROM orders o 
                      LEFT JOIN users u ON o.user_id = u.username 
                      LEFT JOIN user_addresses a ON o.address_id = a.id 
                      WHERE (
@@ -268,7 +275,40 @@ exports.getCancelledOrders = async (options = {}) => {
                         OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND (oi.status LIKE 'Return%' OR oi.status LIKE 'Replace%'))
                      )`;
 
-    const countResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`);
+    if (searchTerm) {
+        baseQuery += ` AND (o.order_number ILIKE $1 OR u.emailid ILIKE $1 OR u.contactno ILIKE $1 OR a.full_address ILIKE $1)`;
+        queryParams.push(`%${searchTerm}%`);
+    }
+
+    const paramOffsetIndex = queryParams.length + 1;
+
+    // ── Refund Desk specific filtering ──────────────────────────────────────
+    if (refundStatusFilter === 'active') {
+        // Only show orders that are actively being processed for a refund.
+        // Exclude: already Refunded/Completed, and Pending-refund orders
+        // whose order hasn't been admin-approved yet.
+        baseQuery += `
+                     AND (o.refund_status IS NULL OR o.refund_status NOT IN ('Refunded', 'Completed'))
+                     AND NOT (
+                         (o.refund_status = 'Pending' OR o.refund_status IS NULL)
+                         AND o.status IN (
+                             'Cancellation Requested', 'CANCEL_REQUESTED',
+                             'Return Request Processing', 'Replacement Request Processing'
+                         )
+                     )`;
+    } else if (refundStatusFilter && refundStatusFilter !== 'All') {
+        // Explicit single-status filter (Pending, In-Review, Processing, Refunded, Rejected)
+        if (refundStatusFilter === 'Pending') {
+            baseQuery += ` AND (o.refund_status = 'Pending' OR o.refund_status IS NULL)`;
+        } else {
+            baseQuery += ` AND o.refund_status = '${refundStatusFilter.replace(/'/g, "''")}'`;
+        }
+    }
+    // 'All' = no extra filter, return everything
+
+
+
+    const countResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, queryParams);
     const totalCount = parseInt(countResult.rows[0].count);
 
     const orderResult = await pool.query(
@@ -290,7 +330,7 @@ exports.getCancelledOrders = async (options = {}) => {
                             (SELECT ROUND(SUM(price * quantity), 2)
                              FROM order_items
                              WHERE order_id = o.id
-                               AND status IN ('Return Request Processing', 'Return Approved', 'Returned', 'Received at Homved', 'Refunded')
+                               AND status IN ('Return Request Processing', 'Return Approved', 'Returned', 'Received at Homved', 'Refunded', 'Return Collected', 'Restocked')
                             ), 0
                         )
                     ELSE
@@ -307,14 +347,20 @@ exports.getCancelledOrders = async (options = {}) => {
                     (SELECT json_agg(i_data)
                      FROM (
                          SELECT name, quantity, price, status FROM order_items 
-                         WHERE order_id = o.id AND (status = 'Cancelled' OR status = 'Returned' OR status = 'Return Approved' OR status = 'Return Request Processing' OR status = 'Cancellation Requested')
+                         WHERE order_id = o.id AND (status = 'Cancelled' OR status = 'Returned' OR status = 'Return Approved' OR status = 'Return Request Processing' OR status = 'Cancellation Requested' OR status = 'Return Processing' OR status = 'Return Collected' OR status = 'Received at Homved' OR status = 'Restocked')
                      ) i_data
                     ), '[]'::json
                 ) as refund_items
          ${baseQuery}
-         ORDER BY o.updated_at DESC
-         LIMIT $1 OFFSET $2`,
-        [limit, offset]
+         ORDER BY 
+            CASE 
+              WHEN o.status IN ('Cancelled', 'Partially Cancelled', 'Return Approved', 'Received at Homved', 'Returned', 'Refunded', 'Replace Approved', 'Replaced') 
+                   OR EXISTS (SELECT 1 FROM order_items WHERE order_id = o.id AND status IN ('Cancelled', 'Returned', 'Refunded', 'Return Approved', 'Replace Approved', 'Replaced')) THEN 1 
+              ELSE 2 
+            END ASC,
+            o.updated_at DESC
+         LIMIT $${paramOffsetIndex} OFFSET $${paramOffsetIndex + 1}`,
+        [...queryParams, limit, offset]
     );
 
     return {
@@ -410,7 +456,7 @@ exports.requestReturnReplace = async (orderId, userId, data) => {
         const windowDays = 7;
         const deliveredDate = order.delivered_at ? new Date(order.delivered_at) : null;
         if (!deliveredDate && order.status === 'Delivered') throw new Error('Delivery timestamp missing.');
-        
+
         if (deliveredDate) {
             const diffDays = Math.ceil(Math.abs(new Date() - deliveredDate) / (1000 * 60 * 60 * 24));
             if (diffDays > windowDays) throw new Error(`Return window expired (${windowDays} days)`);
@@ -422,7 +468,7 @@ exports.requestReturnReplace = async (orderId, userId, data) => {
 
         for (const reqItem of requestedItems) {
             const { id: itemId, quantity: returnQty } = reqItem;
-            
+
             // Fetch current item state
             const itemRes = await client.query(`SELECT * FROM order_items WHERE id = $1::uuid AND order_id = $2::uuid`, [itemId, orderId]);
             if (itemRes.rows.length === 0) continue;
@@ -433,7 +479,7 @@ exports.requestReturnReplace = async (orderId, userId, data) => {
             if (returnQty < originalItem.quantity) {
                 // SPLIT ROW: Reduce original quantity
                 await client.query(`UPDATE order_items SET quantity = quantity - $1 WHERE id = $2::uuid`, [returnQty, itemId]);
-                
+
                 // INSERT new row as requested for return/replace
                 await client.query(
                     `INSERT INTO order_items (
@@ -450,7 +496,7 @@ exports.requestReturnReplace = async (orderId, userId, data) => {
         // 4. Update Main Order Status
         // If some items are being returned, mark order as "Partially Returning" for clarity
         const orderStatus = isReturn ? 'Return Request Processing' : 'Replacement Request Processing';
-        
+
         await client.query(
             `UPDATE orders 
             SET status = $2::text,
@@ -509,7 +555,7 @@ exports.requestItemCancellation = async (orderId, userId, data, isAdmin = false)
 
         // 2. Security & Validation (User Story 3)
         if (!isAdmin && order.user_id !== userId) throw new Error('Not authorized');
-        
+
         // Only Pending/Processing/Confirmed orders are cancellable (admin can also cancel Shipped/Out for Delivery)
         const cancellableStatuses = isAdmin
             ? ['Pending', 'Confirmed', 'Processing', 'Shipped', 'Out for Delivery', 'Cancellation Requested']
@@ -524,7 +570,7 @@ exports.requestItemCancellation = async (orderId, userId, data, isAdmin = false)
         let totalCancelQty = 0;
         for (const reqItem of requestedItems) {
             const { id: itemId, quantity: cancelQty } = reqItem;
-            
+
             const itemRes = await client.query(`SELECT * FROM order_items WHERE id = $1::uuid AND order_id = $2::uuid`, [itemId, orderId]);
             if (itemRes.rows.length === 0) continue;
             const originalItem = itemRes.rows[0];
@@ -536,7 +582,7 @@ exports.requestItemCancellation = async (orderId, userId, data, isAdmin = false)
             if (cancelQty < originalItem.quantity) {
                 // SPLIT ROW: Reduce original quantity
                 await client.query(`UPDATE order_items SET quantity = quantity - $1 WHERE id = $2::uuid`, [cancelQty, itemId]);
-                
+
                 // INSERT new row as requested for cancellation
                 await client.query(
                     `INSERT INTO order_items (
@@ -553,7 +599,7 @@ exports.requestItemCancellation = async (orderId, userId, data, isAdmin = false)
         // 4. Update Main Order Status
         const totalItemsInOrderRes = await client.query(`SELECT SUM(quantity) as total_qty FROM order_items WHERE order_id = $1::uuid AND status NOT IN ('Cancelled', 'Returned', 'Refunded', 'Cancellation Requested')`, [orderId]);
         const totalQtyInOrder = parseInt(totalItemsInOrderRes.rows[0].total_qty || 0);
-        
+
         const isFullOrderCancel = (totalQtyInOrder === 0);
 
         if (isFullOrderCancel) {
@@ -662,10 +708,10 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 
         if (itemIds && Array.isArray(itemIds) && itemIds.length > 0 && typeof itemIds[0] === 'object') {
             console.log(`[OrderService] Partial update for Order ${orderId}: Items=${JSON.stringify(itemIds)}, Status=${status}`);
-            
+
             for (const reqItem of itemIds) {
                 const { id: itemId, quantity: cancelQty } = reqItem;
-                
+
                 // Fetch current item state (supporting both UUID and product ID)
                 const isUuid = typeof itemId === 'string' && itemId.length === 36;
                 let itemRes;
@@ -683,7 +729,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 if (cancelQty < originalItem.quantity) {
                     // SPLIT ROW: Reduce original quantity using UUID
                     await client.query(`UPDATE order_items SET quantity = quantity - $1 WHERE id = $2::uuid`, [cancelQty, dbItemId]);
-                    
+
                     // INSERT new row with the requested status
                     await client.query(
                         `INSERT INTO order_items (
@@ -704,7 +750,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 
                 let stockAdjustment = 0;
                 if (isCancelling && !wasCancelling) {
-                    stockAdjustment = cancelQty; 
+                    stockAdjustment = cancelQty;
                 } else if (!isCancelling && wasCancelling) {
                     stockAdjustment = -cancelQty;
                 }
@@ -725,13 +771,13 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             // 3. Check if all items in the order are now cancelled
             const totalItemsResult = await client.query(`SELECT COUNT(*) FROM order_items WHERE order_id = $1::uuid`, [orderId]);
             const cancelledItemsResult = await client.query(`SELECT COUNT(*) FROM order_items WHERE order_id = $1::uuid AND status = 'Cancelled'`, [orderId]);
-            
+
             const totalCount = parseInt(totalItemsResult.rows[0].count);
             const cancelledCount = parseInt(cancelledItemsResult.rows[0].count);
 
             if (cancelledCount === totalCount) {
                 // All items cancelled -> update main order to status
-                status = 'Cancelled'; 
+                status = 'Cancelled';
                 await client.query(
                     `UPDATE orders 
                      SET status = $2::text, 
@@ -753,9 +799,9 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                          payment_status = COALESCE($8::text, payment_status)
                      WHERE id = $1::uuid`,
                     [
-                        orderId, 
-                        status, 
-                        cancelReason || null, 
+                        orderId,
+                        status,
+                        cancelReason || null,
                         oldStatus || null,
                         bankDetails?.accountNumber || null,
                         bankDetails?.ifscCode || null,
@@ -763,10 +809,12 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         paymentStatus || null
                     ]
                 );
+                await client.query('COMMIT');
+                return await exports.getOrderById(orderId);
             } else {
                 // Calculate new subtotal for remaining active items
                 const subtotalResult = await client.query(
-                    `SELECT SUM(price * quantity) as new_subtotal FROM order_items WHERE order_id = $1::uuid AND (status IS NULL OR (status != 'Cancelled' AND status != 'Return Approved' AND status != 'Returned' AND status != 'Refunded'))`,
+                    `SELECT SUM(price * quantity) as new_subtotal FROM order_items WHERE order_id = $1::uuid AND (status IS NULL OR status NOT IN ('Cancelled', 'Return Approved', 'Return Processing', 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked'))`,
                     [orderId]
                 );
                 const newSubtotal = parseFloat(subtotalResult.rows[0].new_subtotal || 0);
@@ -796,10 +844,13 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         total = GREATEST(0, $2::numeric + COALESCE(shipping, 0) - $10::numeric),
                         refund_eligible_amount = COALESCE(refund_eligible_amount, 0) + $9::numeric,
                         status = CASE 
+                            WHEN $7::text = 'Cancelled' THEN status
                             WHEN $7::text = 'Cancellation Requested' THEN 'Cancellation Requested'
                             WHEN status = 'Cancellation Requested' THEN $7::text
                             WHEN $7::text IN (
-                                'Return Request Processing', 'Return Approved', 'Return Rejected', 
+                                'Return Request Processing', 'Return Approved', 'Return Processing', 
+                                'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked', 
+                                'Return Rejected', 'Return/Replace Pending',
                                 'Replace Requested', 'Replacement Request Processing', 'Replace Approved', 
                                 'Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery', 
                                 'Delivered', 'Replaced'
@@ -808,6 +859,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         END,
                         original_status = CASE 
                             WHEN $7::text = 'Cancellation Requested' THEN COALESCE(original_status, status)
+                            WHEN $7::text = 'Cancelled' THEN COALESCE(original_status, status)
                             WHEN status = 'Cancellation Requested' THEN NULL
                             ELSE original_status
                         END,
@@ -834,7 +886,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         newDiscountAmount                                                           // $10
                     ]
                 );
-                
+
                 await client.query('COMMIT');
                 return await exports.getOrderById(orderId);
             }
@@ -865,9 +917,9 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                                payment_status = COALESCE($8::text, payment_status)
                            WHERE id = $1::uuid RETURNING *`;
             updateParams = [
-                orderId, 
-                status, 
-                cancelReason || null, 
+                orderId,
+                status,
+                cancelReason || null,
                 oldStatus || null,
                 bankDetails?.accountNumber || null,
                 bankDetails?.ifscCode || null,
@@ -876,15 +928,15 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             ];
         } else if (status === 'Delivered') {
             console.log(`[OrderService] Marking order ${orderId} as Delivered and Payment as ${paymentStatus || 'Paid'}`);
-            updateQuery = `UPDATE orders SET status = $2, payment_status = $3, delivered_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
+            updateQuery = `UPDATE orders SET status = $2, original_status = $2, payment_status = $3, delivered_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
             updateParams = [orderId, status, paymentStatus || 'Paid'];
-        } else if (status.includes('Return Approved') || status.includes('Return Rejected') || 
-                   status.includes('Replace Approved') || status.includes('Replace Rejected') ||
-                   status === 'Received at Homved' || status === 'Refunded' || status === 'Replaced') {
-            
+        } else if (status.includes('Return Approved') || status.includes('Return Rejected') ||
+            status.includes('Replace Approved') || status.includes('Replace Rejected') ||
+            status === 'Received at Homved' || status === 'Refunded' || status === 'Replaced') {
+
             const isRejected = status.includes('Rejected') || status.includes('Un-Approved');
             const isApproved = status.includes('Approved');
-            
+
             // Pre-calculate values to avoid complex CASE statements in SQL
             let refundStatusVal = oldOrder.refund_status;
             if (oldOrder.payment_status === 'Refunded') {
@@ -942,22 +994,28 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                            refund_status = $4::text,
                            is_product_received = $5::boolean,
                            logistics_status = $6::text,
+                           payment_status = CASE 
+                                              WHEN $2::text = 'Refunded' THEN 'Refunded'
+                                              WHEN $7::text IS NOT NULL THEN $7::text
+                                              ELSE payment_status 
+                                            END,
                            updated_at = NOW() 
                            WHERE id = $1::uuid RETURNING *`;
             updateParams = [
-                orderId, 
-                finalStatus, 
+                orderId,
+                finalStatus,
                 isRejected ? (cancelReason || 'Administrative decision') : null,
                 refundStatusVal,
                 productReceivedVal,
-                logisticsStatusVal
+                logisticsStatusVal,
+                paymentStatus || null
             ];
-            
+
             if (status === 'Replace Approved') {
                 // Fetch the full order details to create a replacement
                 const orderToReplace = await client.query('SELECT * FROM orders WHERE id = $1', [orderId]);
                 const originalOrder = orderToReplace.rows[0];
-                
+
                 if (originalOrder) {
                     // Filter items that are actually being replaced
                     let itemsToReplace = [];
@@ -970,8 +1028,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         itemsToReplace = itemsResult.rows;
                     }
 
-                // We no longer create a double $0.00 order record.
-                // The replacement journey will be tracked on the original order.
+                    // We no longer create a double $0.00 order record.
+                    // The replacement journey will be tracked on the original order.
                 }
 
                 // Mark items in ORIGINAL order as 'Replace Approved'
@@ -982,7 +1040,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
         } else if (status === 'Restore') {
             const restoredStatus = oldOrder.original_status || 'Confirmed';
             console.log(`[OrderService] Restoring order ${orderId} to original status: ${restoredStatus}`);
-            
+
             // Revert requested items back to original status too
             await client.query(`
                 UPDATE order_items 
@@ -997,12 +1055,16 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                            updated_at = NOW() 
                            WHERE id = $1::uuid RETURNING *`;
             updateParams = [orderId, restoredStatus, cancelReason || 'Request rejected by Admin'];
-            
+
             // Update local status variable so syncableStatuses logic below doesn't get confused
             status = restoredStatus;
         } else {
             updateQuery = `UPDATE orders SET 
                            status = $2::text, 
+                           original_status = CASE 
+                                              WHEN $2::text NOT IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'Return Approved', 'Returned', 'Refunded', 'Received at Homved') THEN $2::text 
+                                              ELSE original_status 
+                                            END,
                            payment_status = CASE 
                                             WHEN $2::text = 'Delivered' THEN 'Paid'
                                             WHEN $2::text = 'Refunded' THEN 'Refunded'
@@ -1017,15 +1079,62 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 
         const updateResult = await client.query(updateQuery, updateParams);
 
+        // Fallback for Return/Replace item statuses when itemIds is NOT provided
+        if (!itemIds || itemIds.length === 0) {
+            if (status === 'Return Approved') {
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = 'Return Approved' 
+                     WHERE order_id = $1 AND (status = 'Return Request Processing' OR status = 'Return Requested')`,
+                    [orderId]
+                );
+            } else if (status === 'Return Rejected') {
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = 'Return Rejected' 
+                     WHERE order_id = $1 AND (status = 'Return Request Processing' OR status = 'Return Requested')`,
+                    [orderId]
+                );
+            } else if (status === 'Replace Rejected') {
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = 'Replace Rejected' 
+                     WHERE order_id = $1 AND (status = 'Replacement Request Processing' OR status = 'Replace Requested')`,
+                    [orderId]
+                );
+            } else if (status === 'Received at Homved') {
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = 'Received at Homved' 
+                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                    [orderId]
+                );
+            } else if (status === 'Refunded') {
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = 'Refunded' 
+                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                    [orderId]
+                );
+            } else if (status === 'Returned') {
+                await client.query(
+                    `UPDATE order_items 
+                     SET status = 'Returned' 
+                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                    [orderId]
+                );
+            }
+        }
+
         // Sync all items to the same status if order status changed (standard delivery cycle sync)
         // EXCEPTION: Do not sync items that are 'Cancelled' or in a Return/Replace process
         const syncableStatuses = ['Pending', 'Confirmed', 'Processing', 'Shipped', 'Out for Delivery', 'Delivered', 'Cancelled', 'Returned', 'Refunded'];
-        const itemExcludedStatuses = ['Cancelled', 'Returned', 'Refunded', 'Cancellation Requested', 'Return Request Processing', 'Replacement Request Processing', 'Return Approved', 'Return Rejected', 'Replace Approved', 'Replace Rejected'];
-        
-        if (syncableStatuses.includes(status)) {
+        const itemExcludedStatuses = ['Cancelled', 'Returned', 'Refunded', 'Cancellation Requested', 'Return Request Processing', 'Replacement Request Processing', 'Return Approved', 'Return Rejected', 'Replace Approved', 'Replace Rejected', 'Return Processing', 'Return Collected', 'Received at Homved', 'Restocked', 'Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery', 'Replaced'];
+
+        if (syncableStatuses.includes(status) && (!itemIds || itemIds.length === 0)) {
             // Check if there are any active Return/Replacement items in this order
-            const hasSpecialItems = (oldOrder.items || []).some(item => 
-                (item.status || '').toLowerCase().includes('replace') || 
+            const hasSpecialItems = (oldOrder.items || []).some(item =>
+                (item.status || '').toLowerCase().includes('replace') ||
                 (item.status || '').toLowerCase().includes('return')
             );
 
@@ -1039,7 +1148,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 // Standard Lifecycle-aware sync for normal orders
                 const lifecycle = ['Pending', 'Confirmed', 'Processing', 'Shipped', 'Out for Delivery', 'Delivered'];
                 const targetIndex = lifecycle.indexOf(status);
-                
+
                 const effectiveExcluded = [...itemExcludedStatuses];
                 if (targetIndex !== -1) {
                     lifecycle.forEach((s, idx) => {
@@ -1052,7 +1161,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 await client.query(
                     `UPDATE order_items 
                      SET status = $1 
-                     WHERE order_id = $2 AND (status IS NULL OR status NOT IN (SELECT unnest($3::text[])))`, 
+                     WHERE order_id = $2 AND (status IS NULL OR status NOT IN (SELECT unnest($3::text[])))`,
                     [status, orderId, effectiveExcluded]
                 );
             }
@@ -1090,7 +1199,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 
                 // 2. Notifications: For all major lifecycle changes
                 await whatsappService.sendOrderUpdateNotification(order, status);
-                
+
             } catch (triggerError) {
                 console.error('[TRIGGER ERROR] Background automation failed:', triggerError.message);
                 // Non-blocking error
@@ -1107,7 +1216,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             // Only restore stock for items NOT already cancelled (partial cancellation logic)
             const itemsResult = await client.query(`SELECT product_id, quantity FROM order_items WHERE order_id = $1 AND (status IS NULL OR status != 'Cancelled')`, [orderId]);
             console.log(`[INVENTORY AUTOMATION] Restoring stock for remaining items of order ${orderId} (Status: ${status}). Items: ${itemsResult.rows.length}`);
-            
+
             for (const item of itemsResult.rows) {
                 await client.query(
                     `UPDATE products 
@@ -1155,14 +1264,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                     `SELECT COUNT(*) FROM order_items WHERE order_id = $1 AND status != 'Cancelled'`,
                     [orderId]
                 );
-                
-                if (parseInt(remainingItems.rows[0].count) > 0) {
-                    // If some items remain, set order status to 'Partially Cancelled'
-                    await client.query(
-                        `UPDATE orders SET status = 'Partially Cancelled', updated_at = NOW() WHERE id = $1`,
-                        [orderId]
-                    );
-                }
+
+                // If some items remain, keep current order status (do not set to Partially Cancelled)
             } else if (oldOrder.status !== 'Cancelled') {
                 console.log(`[INVENTORY AUTOMATION] Restoring stock for all active items of cancelled order ${orderId}`);
                 const itemsResult = await client.query(
@@ -1217,18 +1320,19 @@ exports.updateRefundStatus = async (orderId, refundData) => {
         const oldIsProductReceived = oldOrder.is_product_received;
 
         const transitioningToFinal = refundStatus === 'Completed' || refundStatus === 'Refunded';
-        
+
         let finalTxnId = txnId;
 
         if (isOnline && transitioningToFinal) {
             const hasRazorpay = !!oldOrder.razorpay_payment_id;
             const wantsAutoRefund = !txnId || txnId === 'AUTO' || txnId === 'Auto-Refund via Razorpay';
 
-            if (wantsAutoRefund) {
-                if (!hasRazorpay) {
-                    throw new Error('Automated refund failed: No Razorpay payment ID associated with this order.');
-                }
-                
+            if (wantsAutoRefund && !hasRazorpay) {
+                // Fallback to manual transaction ID if no Razorpay payment ID is associated
+                finalTxnId = 'RFND-MANUAL-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+                console.log(`[RefundDesk] No Razorpay payment ID associated with online order. Defaulting to manual transaction ID: ${finalTxnId}`);
+            } else if (wantsAutoRefund) {
+
                 // ── REFUND AMOUNT FOR RAZORPAY ───────────────────────────────────
                 // Return orders: use exact product price (sum of return item prices, no discount deduction).
                 // Cancellation orders: use stored refund_eligible_amount (discount-on-last-product rule).
@@ -1239,7 +1343,7 @@ exports.updateRefundStatus = async (orderId, refundData) => {
                         `SELECT ROUND(SUM(price * quantity), 2) as total
                          FROM order_items
                          WHERE order_id = $1
-                           AND status IN ('Return Request Processing', 'Return Approved', 'Returned', 'Received at Homved', 'Refunded')`,
+                           AND status IN ('Return Request Processing', 'Return Approved', 'Returned', 'Received at Homved', 'Refunded', 'Return Collected', 'Restocked')`,
                         [orderId]
                     );
                     refundAmount = parseFloat(returnItemsRes.rows[0]?.total || 0);
@@ -1298,19 +1402,36 @@ exports.updateRefundStatus = async (orderId, refundData) => {
                                         ELSE is_product_received 
                                        END,
                  payment_status = CASE 
-                                    WHEN $2::text IN ('Completed', 'Refunded') THEN 'Refunded' 
-                                    ELSE payment_status 
-                                  END,
+                                     WHEN $2::text IN ('Completed', 'Refunded') AND NOT EXISTS (
+                                         SELECT 1 FROM order_items 
+                                         WHERE order_id = $1 
+                                           AND (status IS NULL OR status NOT IN (
+                                               'Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'CANCEL_APPROVED',
+                                               'Return Requested', 'Return Request Processing', 'Return Approved', 'Return Processing', 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked',
+                                               'Replace Requested', 'Replacement Request Processing', 'Replace Approved', 'Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery', 'Replaced'
+                                           ))
+                                     ) THEN 'Refunded'
+                                     WHEN $2::text IN ('Completed', 'Refunded') THEN 'Paid'
+                                     ELSE payment_status 
+                                   END,
                  status = CASE 
                             WHEN $2::text IN ('Completed', 'Refunded', 'Success') AND NOT EXISTS (
                                 SELECT 1 FROM order_items 
                                 WHERE order_id = $1 
-                                  AND (status IS NULL OR status NOT IN ('Cancelled', 'Returned', 'Refunded', 'Return Approved', 'Replace Approved', 'Replaced'))
+                                  AND (status IS NULL OR status NOT IN (
+                                      'Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'CANCEL_APPROVED',
+                                      'Return Requested', 'Return Request Processing', 'Return Approved', 'Return Processing', 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked',
+                                      'Replace Requested', 'Replacement Request Processing', 'Replace Approved', 'Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery', 'Replaced'
+                                  ))
                             ) THEN 'Refunded' 
                             WHEN $2::text IN ('Rejected', 'Denied', 'Restocked') AND NOT EXISTS (
                                 SELECT 1 FROM order_items 
                                 WHERE order_id = $1 
-                                  AND (status IS NULL OR status NOT IN ('Cancelled', 'Returned', 'Refunded', 'Return Approved', 'Replace Approved', 'Replaced'))
+                                  AND (status IS NULL OR status NOT IN (
+                                      'Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'CANCEL_APPROVED',
+                                      'Return Requested', 'Return Request Processing', 'Return Approved', 'Return Processing', 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked',
+                                      'Replace Requested', 'Replacement Request Processing', 'Replace Approved', 'Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery', 'Replaced'
+                                  ))
                             ) THEN 'Cancelled'
                             ELSE status 
                           END,
@@ -1328,13 +1449,13 @@ exports.updateRefundStatus = async (orderId, refundData) => {
 
         // INVENTORY AUTOMATION (Based on Logistics)
         const newLogistics = order.logistics_status;
-        const reachedReceived = (newLogistics === 'Received' || newLogistics === 'Received at Homved' || newLogistics === 'Restocked' || refundStatus === 'Restocked') && 
-                                !orderInfo.is_product_received;
+        const reachedReceived = (newLogistics === 'Received' || newLogistics === 'Received at Homved' || newLogistics === 'Restocked' || refundStatus === 'Restocked') &&
+            !oldIsProductReceived;
 
         if (reachedReceived) {
             const itemsResult = await client.query(`SELECT product_id, quantity FROM order_items WHERE order_id = $1`, [orderId]);
             console.log(`[LOGISTICS INVENTORY] Product reached Homved. Restoring stock for order ${orderId}.`);
-            
+
             for (const item of itemsResult.rows) {
                 await client.query(
                     `UPDATE products 
@@ -1413,7 +1534,7 @@ exports.reorderOrder = async (orderId, userId) => {
         }
 
         await client.query('COMMIT');
-        
+
         return {
             success: true,
             added: addedCount,

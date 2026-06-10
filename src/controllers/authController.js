@@ -96,7 +96,8 @@ exports.socialCallback = async (req, res) => {
             email: user.emailid,
             fullName: user.fullname || user.username,
             memberSince: user.member_since,
-            avatar: user.avatar_url
+            avatar: user.avatar_url,
+            phone: user.contactno
         }))}`);
     } catch (error) {
         console.error("Social Auth Error:", error);
