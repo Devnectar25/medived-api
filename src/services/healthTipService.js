@@ -13,6 +13,7 @@ const mapHealthTip = (t) => ({
     category: t.category,
     content: t.content,
     active: t.active,
+    showOnHome: t.show_on_home !== false,
     createdAt: t.created_at,
     updatedAt: t.updated_at
 });
@@ -64,19 +65,19 @@ exports.getHealthTipById = async (id) => {
 };
 
 exports.createHealthTip = async (data) => {
-    const { title, excerpt, image, videoUrl, date, readTime, author, category, content, active } = data;
+    const { title, excerpt, image, videoUrl, date, readTime, author, category, content, active, showOnHome } = data;
     const result = await pool.query(
-        "INSERT INTO health_tips (title, excerpt, image, video_url, date, read_time, author, category, content, active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *",
-        [title, excerpt, image, videoUrl, date, readTime, author, category, content, active !== false]
+        "INSERT INTO health_tips (title, excerpt, image, video_url, date, read_time, author, category, content, active, show_on_home) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *",
+        [title, excerpt, image, videoUrl, date, readTime, author, category, content, active !== false, showOnHome !== false]
     );
     return mapHealthTip(result.rows[0]);
 };
 
 exports.updateHealthTip = async (id, data) => {
-    const { title, excerpt, image, videoUrl, date, readTime, author, category, content, active } = data;
+    const { title, excerpt, image, videoUrl, date, readTime, author, category, content, active, showOnHome } = data;
     const result = await pool.query(
-        "UPDATE health_tips SET title = $1, excerpt = $2, image = $3, video_url = $4, date = $5, read_time = $6, author = $7, category = $8, content = $9, active = $10, updated_at = NOW() WHERE id = $11 RETURNING *",
-        [title, excerpt, image, videoUrl, date, readTime, author, category, content, active !== false, id]
+        "UPDATE health_tips SET title = $1, excerpt = $2, image = $3, video_url = $4, date = $5, read_time = $6, author = $7, category = $8, content = $9, active = $10, show_on_home = $11, updated_at = NOW() WHERE id = $12 RETURNING *",
+        [title, excerpt, image, videoUrl, date, readTime, author, category, content, active !== false, showOnHome !== false, id]
     );
     return result.rows[0] ? mapHealthTip(result.rows[0]) : null;
 };
@@ -114,12 +115,22 @@ exports.getActiveHealthTips = async () => {
     return result.rows.map(mapHealthTip);
 };
 
+exports.getHomeHealthTips = async () => {
+    const result = await pool.query("SELECT * FROM health_tips WHERE active = true AND show_on_home = true ORDER BY created_at DESC");
+    return result.rows.map(mapHealthTip);
+};
+
 exports.setActiveHealthTip = async (id) => {
-    const result = await pool.query("UPDATE health_tips SET active = true WHERE id = $1 RETURNING *", [id]);
+    const result = await pool.query("UPDATE health_tips SET active = true, updated_at = NOW() WHERE id = $1 RETURNING *", [id]);
     return result.rows[0] ? mapHealthTip(result.rows[0]) : null;
 };
 
 exports.setInactiveHealthTip = async (id) => {
-    const result = await pool.query("UPDATE health_tips SET active = false WHERE id = $1 RETURNING *", [id]);
+    const result = await pool.query("UPDATE health_tips SET active = false, updated_at = NOW() WHERE id = $1 RETURNING *", [id]);
+    return result.rows[0] ? mapHealthTip(result.rows[0]) : null;
+};
+
+exports.setShowOnHome = async (id, showOnHome) => {
+    const result = await pool.query("UPDATE health_tips SET show_on_home = $1, updated_at = NOW() WHERE id = $2 RETURNING *", [showOnHome !== false, id]);
     return result.rows[0] ? mapHealthTip(result.rows[0]) : null;
 };

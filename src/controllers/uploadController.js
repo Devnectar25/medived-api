@@ -58,7 +58,19 @@ exports.uploadImage = async (req, res) => {
             return res.status(400).json({ success: false, message: "No file uploaded" });
         }
 
-        const folderName = req.body.folderName || 'common'; 
+        const folderName = req.body.folderName || 'common';
+
+        // Specific validation for health_tips / blog images
+        if (folderName === 'health_tips') {
+            const MAX_BLOG_IMAGE_SIZE = 500 * 1024; // 500KB
+            if (req.file.size > MAX_BLOG_IMAGE_SIZE) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Image size should be less than 500KB. Please upload a smaller file."
+                });
+            }
+        }
+
         const publicUrl = await storageService.uploadImage(req.file, folderName);
 
         console.log(`[UPLOAD] Image successful: ${publicUrl}`);
@@ -69,7 +81,11 @@ exports.uploadImage = async (req, res) => {
         });
     } catch (error) {
         console.error("Error in uploadImage:", error);
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ 
+            success: false, 
+            message: error.message || "Failed to upload image",
+            error: error.message 
+        });
     }
 };
 

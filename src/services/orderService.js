@@ -87,11 +87,11 @@ exports.createOrder = async (orderData) => {
         const orderResult = await client.query(
             `INSERT INTO orders (
                 user_id, order_number, address_id, payment_method, payment_status, payment_type,
-                subtotal, original_total, shipping,
+                subtotal, initial_subtotal, original_total, shipping,
                 discount_amount, total,
                 coupon_code, coupon_id,
                 status, tracking_number, estimated_delivery, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'Pending', $14, $15, NOW(), NOW())
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11, $12, $13, 'Pending', $14, $15, NOW(), NOW())
             RETURNING *`,
             [
                 userId,                          // $1
@@ -184,45 +184,110 @@ exports.getAllOrders = async (options = {}) => {
     const { limit = 10, offset = 0, status, paymentStatus } = options;
 
     let baseQuery = `FROM orders o LEFT JOIN user_addresses a ON o.address_id = a.id LEFT JOIN users u ON o.user_id = u.username WHERE 1=1`;
-    const { type = 'successful' } = options;
+    const { type } = options;
 
-    if (type === 'successful') {
-        baseQuery += ` AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')`;
-    } else if (type === 'potential') {
+    const hasSpecificSearch = Boolean(options.orderNumber || options.userName);
+
+    if (type === 'potential') {
         baseQuery += ` AND (o.payment_method != 'cod' AND o.payment_status = 'Pending')`;
+    } else if (type === 'successful') {
+        baseQuery += ` AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')`;
+    } else if (!type && !hasSpecificSearch) {
+        // By default when no specific search is active, show standard orders
+        // If paymentStatus is specifically set to 'Pending', do not restrict by cod
+        if (paymentStatus !== 'Pending') {
+            baseQuery += ` AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')`;
+        }
     }
-    // 'all' includes both successful and potential (DRAFTs/ABANDONED)
 
     const params = [];
     let paramIndex = 1;
 
     if (status && status !== 'all') {
         if (status === 'Cancelled') {
-            baseQuery += ` AND o.status IN ('Cancelled', 'Returned', 'Refunded')`;
+            baseQuery += ` AND (o.status = 'Cancelled' OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status = 'Cancelled'))`;
+        } else if (status === 'Partially Cancelled') {
+            baseQuery += ` AND (
+                EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status = 'Cancelled')
+                AND EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND (oi.status IS NULL OR oi.status NOT IN ('Cancelled', 'Returned', 'Refunded')))
+            )`;
         } else if (status === 'Cancellation Requested') {
             baseQuery += ` AND (o.status IN ('Cancellation Requested', 'CANCEL_REQUESTED') OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED')))`;
+        } else if (status === 'Return Request Processing') {
+            baseQuery += ` AND (o.status IN ('Return Request Processing', 'Return Requested') OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status IN ('Return Request Processing', 'Return Requested')))`;
+        } else if (status === 'Replacement Request Processing') {
+            baseQuery += ` AND (o.status IN ('Replacement Request Processing', 'Replace Requested') OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status IN ('Replacement Request Processing', 'Replace Requested')))`;
+        } else if (status === 'Returned') {
+            baseQuery += ` AND (o.status IN ('Returned', 'Return Approved', 'Received at Homved') OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status IN ('Returned', 'Return Approved', 'Received at Homved')))`;
+        } else if (status === 'Refunded') {
+            baseQuery += ` AND (o.status = 'Refunded' OR o.payment_status = 'Refunded' OR o.refund_status IN ('Refunded', 'Completed') OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status = 'Refunded'))`;
+        } else if (status === 'Replaced') {
+            baseQuery += ` AND (o.status IN ('Replaced', 'Replace Approved', 'Replacement Out for Delivery') OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status IN ('Replaced', 'Replace Approved', 'Replacement Out for Delivery')))`;
         } else {
-            baseQuery += ` AND o.status = $${paramIndex}`;
+            baseQuery += ` AND (o.status = $${paramIndex} OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status = $${paramIndex}))`;
             params.push(status);
             paramIndex++;
         }
     }
 
     if (paymentStatus && paymentStatus !== 'all') {
-        baseQuery += ` AND o.payment_status = $${paramIndex}`;
-        params.push(paymentStatus);
-        paramIndex++;
+        if (paymentStatus === 'Refunded') {
+            baseQuery += ` AND (o.payment_status = 'Refunded' OR o.refund_status IN ('Refunded', 'Completed'))`;
+        } else {
+            baseQuery += ` AND o.payment_status = $${paramIndex}`;
+            params.push(paymentStatus);
+            paramIndex++;
+        }
+    }
+
+    if (options.paymentType && options.paymentType !== 'all') {
+        if (options.paymentType === 'COD') {
+            baseQuery += ` AND (LOWER(o.payment_method) = 'cod' OR o.payment_type = 'COD')`;
+        } else if (options.paymentType === 'Paid') {
+            baseQuery += ` AND (LOWER(o.payment_method) != 'cod' AND (o.payment_type IS NULL OR o.payment_type != 'COD'))`;
+        }
     }
 
     if (options.userName) {
-        baseQuery += ` AND (u.username ILIKE $${paramIndex} OR u.emailid ILIKE $${paramIndex})`;
-        params.push(`%${options.userName}%`);
+        const cleanUser = options.userName.trim();
+        baseQuery += ` AND (
+            u.username ILIKE $${paramIndex}
+            OR u.emailid ILIKE $${paramIndex}
+            OR u.fullname ILIKE $${paramIndex}
+            OR u.contactno ILIKE $${paramIndex}
+            OR o.refund_phone_number ILIKE $${paramIndex}
+            OR a.full_address ILIKE $${paramIndex}
+            OR a.city ILIKE $${paramIndex}
+        )`;
+        params.push(`%${cleanUser}%`);
         paramIndex++;
     }
 
     if (options.orderNumber) {
-        baseQuery += ` AND (o.order_number ILIKE $${paramIndex} OR o.id::text ILIKE $${paramIndex})`;
-        params.push(`%${options.orderNumber}%`);
+        const rawSearch = options.orderNumber.toString().trim();
+        const cleanOrderNumber = rawSearch.replace(/^#/, '').trim();
+        const normalizedSearch = cleanOrderNumber.replace(/[\s\-]/g, '');
+
+        baseQuery += ` AND (
+            o.order_number ILIKE $${paramIndex}
+            OR o.id::text ILIKE $${paramIndex}
+            OR o.tracking_number ILIKE $${paramIndex}
+            OR REPLACE(REPLACE(o.order_number, '-', ''), ' ', '') ILIKE $${paramIndex + 1}
+        )`;
+        params.push(`%${cleanOrderNumber}%`);
+        params.push(`%${normalizedSearch}%`);
+        paramIndex += 2;
+    }
+
+    if (options.dateFrom) {
+        baseQuery += ` AND o.created_at >= $${paramIndex}`;
+        params.push(`${options.dateFrom} 00:00:00`);
+        paramIndex++;
+    }
+
+    if (options.dateTo) {
+        baseQuery += ` AND o.created_at <= $${paramIndex}`;
+        params.push(`${options.dateTo} 23:59:59.999`);
         paramIndex++;
     }
 
@@ -283,8 +348,9 @@ exports.getCancelledOrders = async (options = {}) => {
                      )`;
 
     if (searchTerm) {
-        baseQuery += ` AND (o.order_number ILIKE $1 OR u.emailid ILIKE $1 OR u.contactno ILIKE $1 OR a.full_address ILIKE $1)`;
-        queryParams.push(`%${searchTerm}%`);
+        const cleanTerm = searchTerm.trim().replace(/^#/, '');
+        baseQuery += ` AND (o.order_number ILIKE $1 OR u.emailid ILIKE $1 OR u.contactno ILIKE $1 OR a.full_address ILIKE $1 OR u.fullname ILIKE $1)`;
+        queryParams.push(`%${cleanTerm}%`);
     }
 
     const paramOffsetIndex = queryParams.length + 1;
@@ -362,8 +428,11 @@ exports.getCancelledOrders = async (options = {}) => {
          ${baseQuery}
          ORDER BY 
             CASE 
-              WHEN o.status IN ('Cancelled', 'Partially Cancelled', 'Return Approved', 'Received at Homved', 'Returned', 'Refunded', 'Replace Approved', 'Replaced') 
-                   OR EXISTS (SELECT 1 FROM order_items WHERE order_id = o.id AND status IN ('Cancelled', 'Returned', 'Refunded', 'Return Approved', 'Replace Approved', 'Replaced')) THEN 1 
+              WHEN o.is_returned_order = TRUE 
+                   OR o.return_type IS NOT NULL
+                   OR o.status LIKE 'Return%'
+                   OR o.status IN ('Cancelled', 'Partially Cancelled', 'Return Approved', 'Received at Homved', 'Returned', 'Refunded', 'Replace Approved', 'Replaced', 'Return Request Processing', 'Return Requested', 'Partially Returning', 'Return Processing', 'Return Collected') 
+                   OR EXISTS (SELECT 1 FROM order_items WHERE order_id = o.id AND (status LIKE 'Return%' OR status LIKE 'Replace%' OR status IN ('Cancelled', 'Returned', 'Refunded', 'Return Approved', 'Replace Approved', 'Replaced'))) THEN 1 
               ELSE 2 
             END ASC,
             o.updated_at DESC
@@ -383,14 +452,15 @@ exports.getCancelledOrdersStats = async () => {
     const result = await pool.query(
         `SELECT 
             COUNT(*) FILTER (
-                WHERE (status IN ('CANCEL_REQUESTED', 'Cancelled', 'Refunded', 'Cancellation Requested', 'Returned', 'Received at Homved', 'Return Request Processing', 'Return Approved')
+                WHERE (status IN ('CANCEL_REQUESTED', 'Cancelled', 'Refunded', 'Cancellation Requested', 'Returned', 'Received at Homved', 'Return Request Processing', 'Return Approved', 'Return Rejected', 'Return Processing', 'Return Collected', 'Restocked', 'Partially Returning', 'Return Requested')
                 OR is_returned_order = TRUE
-                OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND (oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED', 'Returned', 'Return Approved', 'Refunded', 'Cancelled', 'Return Request Processing') OR oi.status LIKE 'Return%'))
-                ) AND (LOWER(payment_method) != 'cod' OR is_returned_order = TRUE OR status LIKE 'Return%' OR status IN ('Returned', 'Refunded', 'Received at Homved'))
+                OR return_type IS NOT NULL
+                OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND (oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED', 'Returned', 'Return Approved', 'Refunded', 'Cancelled', 'Return Request Processing', 'Return Requested', 'Return Processing') OR oi.status LIKE 'Return%'))
+                ) AND (LOWER(payment_method) != 'cod' OR is_returned_order = TRUE OR return_type IS NOT NULL OR status LIKE 'Return%' OR status IN ('Returned', 'Refunded', 'Received at Homved', 'Partially Returning'))
             ) as total_cancelled,
             COUNT(*) FILTER (
                 WHERE (refund_status = 'Pending' OR refund_status IS NULL) 
-                AND (LOWER(payment_method) != 'cod' OR is_returned_order = TRUE OR status LIKE 'Return%' OR status IN ('Returned', 'Refunded', 'Received at Homved'))
+                AND (LOWER(payment_method) != 'cod' OR is_returned_order = TRUE OR return_type IS NOT NULL OR status LIKE 'Return%' OR status IN ('Returned', 'Refunded', 'Received at Homved', 'Partially Returning'))
             ) as pending_refunds
          FROM orders`
     );
@@ -706,7 +776,7 @@ exports.getOrderStats = async () => {
     };
 };
 
-exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDetails = null, paymentStatus = null, itemIds = null) => {
+exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDetails = null, paymentStatus = null, itemIds = null, cancelledBy = null) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -798,6 +868,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                              WHEN $3::text IS NOT NULL AND $3::text <> '' THEN $3::text 
                              ELSE COALESCE(cancel_reason, 'Not specified') 
                          END,
+                         cancelled_by = COALESCE($9::text, cancelled_by),
                          original_status = COALESCE(original_status, $4::text), 
                          cancelled_at = NOW(), 
                          updated_at = NOW(),
@@ -819,7 +890,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         bankDetails?.accountNumber || null,
                         bankDetails?.ifscCode || null,
                         bankDetails?.holderName || null,
-                        paymentStatus || null
+                        paymentStatus || null,
+                        cancelledBy || null
                     ]
                 );
                 await client.query('COMMIT');
@@ -838,6 +910,9 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 // Only when the remaining subtotal drops below the discount amount does
                 // any excess discount get deducted from the refund value.
                 // This ensures earlier cancellations are refunded at full item price.
+                const originalOrderSubtotal = parseFloat(oldOrder.initial_subtotal || oldOrder.subtotal || 0);
+                const originalOrderTotal = parseFloat(oldOrder.original_total || oldOrder.total || 0);
+
                 const cancelledSubtotal = Math.max(0, parseFloat(oldOrder.subtotal) - newSubtotal);
                 const originalDiscount = parseFloat(oldOrder.discount_amount || 0);
 
@@ -845,16 +920,25 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 // If remaining subtotal >= discount, all discount stays on remaining items → refund full cancelled amount.
                 // If remaining subtotal < discount, the excess spills into the refund deduction.
                 const discountAbsorbedByRemaining = Math.min(originalDiscount, newSubtotal);
-                const newDiscountAmount = discountAbsorbedByRemaining;
+                const newDiscountAmount = (newSubtotal > 0) ? discountAbsorbedByRemaining : originalDiscount;
                 const discountSpillIntoRefund = Math.max(0, originalDiscount - discountAbsorbedByRemaining);
                 const refundValue = Math.max(0, cancelledSubtotal - discountSpillIntoRefund);
+
+                // If remaining active items subtotal is 0 (all items cancelled/returned),
+                // preserve the original subtotal and total so the order record never displays ₹0.00!
+                const finalOrderSubtotal = (newSubtotal > 0) ? newSubtotal : originalOrderSubtotal;
+                const finalOrderTotal = (newSubtotal > 0) 
+                    ? Math.max(0, newSubtotal + parseFloat(oldOrder.shipping || 0) - discountAbsorbedByRemaining) 
+                    : originalOrderTotal;
 
                 // Update order with new subtotal, discount, and re-calculate total
                 await client.query(
                     `UPDATE orders SET 
+                        initial_subtotal = COALESCE(initial_subtotal, subtotal),
+                        original_total = COALESCE(original_total, total),
                         subtotal = $2::numeric,
                         discount_amount = $10::numeric,
-                        total = GREATEST(0, $2::numeric + COALESCE(shipping, 0) - $10::numeric),
+                        total = $11::numeric,
                         refund_eligible_amount = COALESCE(refund_eligible_amount, 0) + $9::numeric,
                         status = CASE 
                             WHEN $7::text = 'Cancelled' THEN status
@@ -888,15 +972,16 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                      WHERE id = $1::uuid`,
                     [
                         orderId,                                                                    // $1
-                        newSubtotal,                                                                // $2
+                        finalOrderSubtotal,                                                         // $2
                         bankDetails?.accountNumber || null,                                         // $3
                         bankDetails?.ifscCode || null,                                              // $4
                         bankDetails?.holderName || null,                                            // $5
-                        (oldOrder.payment_method?.toLowerCase() !== 'cod') ? 'Pending' : (oldOrder.refund_status || null), // $6
+                        (oldOrder.payment_method?.toLowerCase() !== 'cod' || oldOrder.is_returned_order || (status && status.toLowerCase().includes('return'))) ? 'Pending' : (oldOrder.refund_status || null), // $6
                         status,                                                                     // $7
                         cancelReason || null,                                                       // $8
                         refundValue,                                                                // $9
-                        newDiscountAmount                                                           // $10
+                        newDiscountAmount,                                                          // $10
+                        finalOrderTotal                                                             // $11
                     ]
                 );
 
@@ -916,6 +1001,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                                    WHEN $3::text IS NOT NULL AND $3::text <> '' THEN $3::text 
                                    ELSE COALESCE(cancel_reason, 'Not specified') 
                                END,
+                               cancelled_by = COALESCE($9::text, cancelled_by),
                                original_status = COALESCE(original_status, $4::text), 
                                cancelled_at = NOW(), 
                                updated_at = NOW(),
@@ -937,7 +1023,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 bankDetails?.accountNumber || null,
                 bankDetails?.ifscCode || null,
                 bankDetails?.holderName || null,
-                paymentStatus || null
+                paymentStatus || null,
+                cancelledBy || null
             ];
         } else if (status === 'Delivered') {
             console.log(`[OrderService] Marking order ${orderId} as Delivered and Payment as ${paymentStatus || 'Paid'}`);
@@ -1086,8 +1173,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                                             WHEN $3::text IS NOT NULL THEN $3::text
                                             ELSE payment_status 
                                           END,
-                           is_returned_order = CASE WHEN $2::text IN ('Returned', 'Return Approved', 'Received at Homved') THEN TRUE ELSE is_returned_order END,
-                           refund_status = CASE WHEN $2::text IN ('Returned', 'Return Approved') THEN COALESCE(refund_status, 'Pending') ELSE refund_status END,
+                           is_returned_order = CASE WHEN $2::text IN ('Returned', 'Return Approved', 'Received at Homved', 'Return Request Processing', 'Return Requested', 'Partially Returning', 'Return Processing', 'Return Collected') THEN TRUE ELSE is_returned_order END,
+                           refund_status = CASE WHEN $2::text IN ('Returned', 'Return Approved', 'Return Request Processing', 'Return Requested', 'Partially Returning', 'Return Processing', 'Return Collected') THEN COALESCE(refund_status, 'Pending') ELSE refund_status END,
                            is_product_received = CASE WHEN $2::text IN ('Received at Homved', 'Returned') THEN TRUE ELSE is_product_received END,
                            logistics_status = CASE WHEN $2::text IN ('Received at Homved', 'Returned') THEN 'Received at Homved' ELSE logistics_status END,
                            updated_at = NOW() WHERE id = $1::uuid RETURNING *`;

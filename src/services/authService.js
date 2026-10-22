@@ -23,8 +23,12 @@ const generateOTP = () => {
 exports.registerUser = async (data) => {
     const { email, password, fullName, phone } = data;
 
-    if (!phone || !phone.trim()) {
-        throw new Error("Mobile number is required");
+    let cleanPhone = phone ? phone.toString().trim().replace(/\D/g, '') : '';
+    if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
+        cleanPhone = cleanPhone.slice(2);
+    }
+    if (!cleanPhone || !/^[6-9]\d{9}$/.test(cleanPhone)) {
+        throw new Error("Please enter a valid 10-digit mobile number");
     }
 
     // Check if user already exists
@@ -49,7 +53,7 @@ exports.registerUser = async (data) => {
             email,
             password: hashedPassword,
             fullName,
-            phone
+            phone: cleanPhone
         }
     });
 
@@ -82,6 +86,7 @@ exports.loginUser = async (email, password) => {
                 userid: user.username,
                 email: user.emailid,
                 fullName: user.fullname || user.username,
+                phone: user.contactno,
                 twoFactorEnabled: true
             }
         });
@@ -104,6 +109,7 @@ exports.loginUser = async (email, password) => {
             userid: user.username,
             email: user.emailid,
             fullName: user.fullname || user.username,
+            phone: user.contactno,
             memberSince: user.member_since,
             twoFactorEnabled: true
         },
@@ -143,7 +149,7 @@ exports.verifyOtp = async (email, otp) => {
         const username = userEmail;
 
         const result = await pool.query(
-            "INSERT INTO public.users (username, emailid, password, contactno, active, createdate, member_since, fullname) VALUES ($1, $2, $3, $4, true, NOW(), NOW(), $5) RETURNING username, emailid, member_since, fullname",
+            "INSERT INTO public.users (username, emailid, password, contactno, active, createdate, member_since, fullname) VALUES ($1, $2, $3, $4, true, NOW(), NOW(), $5) RETURNING username, emailid, contactno, member_since, fullname",
             [username, userEmail, password, phone, fullName]
         );
 
@@ -153,6 +159,7 @@ exports.verifyOtp = async (email, otp) => {
             userid: newUser.username,
             email: newUser.emailid,
             fullName: newUser.fullname || fullName || newUser.username,
+            phone: newUser.contactno || phone,
             memberSince: newUser.member_since,
             twoFactorEnabled: true
         };
@@ -161,12 +168,13 @@ exports.verifyOtp = async (email, otp) => {
         console.log(`[verifyOtp Service] Processing login verification for email: ${email}`);
         // Login verification
         user = record.userData;
-        // Include memberSince, fullname, and avatar for login as well
+        // Include memberSince, fullname, avatar, and contactno for login as well
         const loginId = user.id || user.userid;
-        const loginResult = await pool.query("SELECT member_since, fullname, avatar_url FROM public.users WHERE username = $1", [loginId]);
+        const loginResult = await pool.query("SELECT member_since, fullname, avatar_url, contactno FROM public.users WHERE username = $1", [loginId]);
         user.memberSince = loginResult.rows[0]?.member_since;
         user.fullName = loginResult.rows[0]?.fullname || user.fullName || loginId;
         user.avatar = loginResult.rows[0]?.avatar_url;
+        user.phone = loginResult.rows[0]?.contactno || user.phone;
         token = generateToken(loginId, 'user');
     }
 
