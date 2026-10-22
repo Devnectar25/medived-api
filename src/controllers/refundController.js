@@ -21,7 +21,7 @@ exports.initiateRazorpayRefund = async (req, res) => {
         // 1. Fetch order details (Razorpay Payment ID and Amount)
         const orderRes = await client.query(
             `SELECT o.*, 
-                    u.username as "customer_name",
+                    COALESCE(u.fullname, u.username) as "customer_name",
                     u.contactno as "customer_phone_db",
                     a.full_address, 
                     a.city, 
@@ -40,16 +40,29 @@ exports.initiateRazorpayRefund = async (req, res) => {
 
         const rawOrder = orderRes.rows[0];
         
+        // Parse recipient name and clean street address if full_address has "<Name>, <Address>"
+        let rawAddr = (rawOrder.full_address || '').trim();
+        let parsedName = rawOrder.customer_name || rawOrder.user_id || 'Customer';
+        let cleanAddr = rawAddr;
+        if (rawAddr.includes(',')) {
+            const commaIdx = rawAddr.indexOf(',');
+            const potentialName = rawAddr.substring(0, commaIdx).trim();
+            const potentialAddr = rawAddr.substring(commaIdx + 1).trim();
+            if (potentialName && !/\d/.test(potentialName) && potentialAddr) {
+                parsedName = potentialName;
+                cleanAddr = potentialAddr;
+            }
+        }
+        
         // Structure address and customer info for template compatibility
         const order = {
             ...rawOrder,
             customerPhone: rawOrder.customer_phone_db || rawOrder.user_id,
             shippingAddress: {
-                // Mocking first/last name from username similar to frontend mapping
-                firstName: rawOrder.customer_name || rawOrder.user_id || 'Customer',
+                firstName: parsedName,
                 lastName: '',
                 phone: rawOrder.customer_phone_db || '',
-                address: rawOrder.full_address || '',
+                address: cleanAddr,
                 city: rawOrder.city || '',
                 state: rawOrder.state || '',
                 pincode: rawOrder.postal_code || ''

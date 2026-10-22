@@ -232,7 +232,7 @@ exports.getAllOrders = async (options = {}) => {
     const queryParams = [...params, limit, offset];
 
     const orderResult = await pool.query(
-        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+        `SELECT o.*, u.fullname as customer_name, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
@@ -263,16 +263,23 @@ exports.getCancelledOrders = async (options = {}) => {
                      LEFT JOIN users u ON o.user_id = u.username 
                      LEFT JOIN user_addresses a ON o.address_id = a.id 
                      WHERE (
-                        o.status IN ('CANCEL_REQUESTED', 'Cancelled', 'Refunded', 'Cancellation Requested', 'Returned', 'Received at Homved', 'Return Request Processing', 'Return Approved', 'Return Rejected')
+                        o.status IN ('CANCEL_REQUESTED', 'Cancelled', 'Refunded', 'Cancellation Requested', 'Returned', 'Received at Homved', 'Return Request Processing', 'Return Approved', 'Return Rejected', 'Return Processing', 'Return Collected', 'Restocked', 'Partially Returning', 'Return Requested')
+                        OR o.is_returned_order = TRUE
+                        OR o.return_type IS NOT NULL
                         OR EXISTS (
-                            SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED', 'Return Requested', 'Return Request Processing', 'Replace Requested', 'Replacement Request Processing', 'Returned', 'Return Approved', 'Refunded', 'Cancelled')
+                            SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND (
+                                oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED', 'Return Requested', 'Return Request Processing', 'Replace Requested', 'Replacement Request Processing', 'Returned', 'Return Approved', 'Refunded', 'Cancelled', 'Received at Homved', 'Restocked', 'Return Processing')
+                                OR oi.status LIKE 'Return%'
+                            )
                         )
                      )
                      AND (
                         LOWER(o.payment_method) != 'cod' 
+                        OR o.is_returned_order = TRUE
+                        OR o.return_type IS NOT NULL
                         OR o.status LIKE 'Return%' 
-                        OR o.status IN ('Returned', 'Refunded')
-                        OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND (oi.status LIKE 'Return%' OR oi.status LIKE 'Replace%'))
+                        OR o.status IN ('Returned', 'Refunded', 'Received at Homved', 'Restocked', 'Partially Returning')
+                        OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND (oi.status LIKE 'Return%' OR oi.status LIKE 'Replace%' OR oi.status IN ('Returned', 'Refunded', 'Received at Homved', 'Restocked')))
                      )`;
 
     if (searchTerm) {
@@ -285,16 +292,14 @@ exports.getCancelledOrders = async (options = {}) => {
     // ── Refund Desk specific filtering ──────────────────────────────────────
     if (refundStatusFilter === 'active') {
         // Only show orders that are actively being processed for a refund.
-        // Exclude: already Refunded/Completed, and Pending-refund orders
-        // whose order hasn't been admin-approved yet.
+        // Exclude: already Refunded/Completed, and unapproved online cancellation requests.
+        // All returned orders (including COD returns) must always be visible for refund processing.
         baseQuery += `
                      AND (o.refund_status IS NULL OR o.refund_status NOT IN ('Refunded', 'Completed'))
                      AND NOT (
                          (o.refund_status = 'Pending' OR o.refund_status IS NULL)
-                         AND o.status IN (
-                             'Cancellation Requested', 'CANCEL_REQUESTED',
-                             'Return Request Processing', 'Replacement Request Processing'
-                         )
+                         AND o.status IN ('Cancellation Requested', 'CANCEL_REQUESTED')
+                         AND (o.is_returned_order IS NOT TRUE AND o.status NOT LIKE 'Return%' AND o.status != 'Returned')
                      )`;
     } else if (refundStatusFilter && refundStatusFilter !== 'All') {
         // Explicit single-status filter (Pending, In-Review, Processing, Refunded, Rejected)
@@ -306,13 +311,11 @@ exports.getCancelledOrders = async (options = {}) => {
     }
     // 'All' = no extra filter, return everything
 
-
-
     const countResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, queryParams);
     const totalCount = parseInt(countResult.rows[0].count);
 
     const orderResult = await pool.query(
-        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+        `SELECT o.*, u.fullname as customer_name, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
@@ -325,13 +328,17 @@ exports.getCancelledOrders = async (options = {}) => {
                 -- Return orders: always use exact product price (sum of return item prices, no discount).
                 -- Cancellation orders: use stored refund_eligible_amount (discount-on-last-product rule).
                 CASE
-                    WHEN o.is_returned_order = TRUE THEN
+                    WHEN o.is_returned_order = TRUE OR o.status LIKE 'Return%' OR o.status IN ('Returned', 'Refunded', 'Received at Homved') THEN
                         COALESCE(
-                            (SELECT ROUND(SUM(price * quantity), 2)
-                             FROM order_items
-                             WHERE order_id = o.id
-                               AND status IN ('Return Request Processing', 'Return Approved', 'Returned', 'Received at Homved', 'Refunded', 'Return Collected', 'Restocked')
-                            ), 0
+                            NULLIF(
+                                (SELECT ROUND(SUM(price * quantity), 2)
+                                 FROM order_items
+                                 WHERE order_id = o.id
+                                   AND (status IN ('Return Request Processing', 'Return Requested', 'Return Approved', 'Return Processing', 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked') OR status LIKE 'Return%')
+                                ), 0
+                            ),
+                            NULLIF(o.refund_eligible_amount, 0),
+                            o.total
                         )
                     ELSE
                         COALESCE(
@@ -339,15 +346,16 @@ exports.getCancelledOrders = async (options = {}) => {
                             (SELECT ROUND(SUM(price * quantity), 2)
                              FROM order_items
                              WHERE order_id = o.id
-                               AND status IN ('Cancelled', 'Cancellation Requested')
-                            ), 0
+                               AND status IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED')
+                            ),
+                            o.total
                         )
                 END as refund_eligible_amount,
                 COALESCE(
                     (SELECT json_agg(i_data)
                      FROM (
                          SELECT name, quantity, price, status FROM order_items 
-                         WHERE order_id = o.id AND (status = 'Cancelled' OR status = 'Returned' OR status = 'Return Approved' OR status = 'Return Request Processing' OR status = 'Cancellation Requested' OR status = 'Return Processing' OR status = 'Return Collected' OR status = 'Received at Homved' OR status = 'Restocked')
+                         WHERE order_id = o.id AND (status = 'Cancelled' OR status = 'Returned' OR status = 'Return Approved' OR status = 'Return Request Processing' OR status = 'Cancellation Requested' OR status = 'Return Processing' OR status = 'Return Collected' OR status = 'Received at Homved' OR status = 'Restocked' OR status = 'Return Requested')
                      ) i_data
                     ), '[]'::json
                 ) as refund_items
@@ -375,11 +383,15 @@ exports.getCancelledOrdersStats = async () => {
     const result = await pool.query(
         `SELECT 
             COUNT(*) FILTER (
-                WHERE (status IN ('CANCEL_REQUESTED', 'Cancelled', 'Refunded', 'Cancellation Requested', 'Returned', 'Received at Homved')
-                OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED', 'Returned', 'Return Approved', 'Refunded', 'Cancelled'))
-                ) AND LOWER(payment_method) != 'cod'
+                WHERE (status IN ('CANCEL_REQUESTED', 'Cancelled', 'Refunded', 'Cancellation Requested', 'Returned', 'Received at Homved', 'Return Request Processing', 'Return Approved')
+                OR is_returned_order = TRUE
+                OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND (oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED', 'Returned', 'Return Approved', 'Refunded', 'Cancelled', 'Return Request Processing') OR oi.status LIKE 'Return%'))
+                ) AND (LOWER(payment_method) != 'cod' OR is_returned_order = TRUE OR status LIKE 'Return%' OR status IN ('Returned', 'Refunded', 'Received at Homved'))
             ) as total_cancelled,
-            COUNT(*) FILTER (WHERE refund_status = 'Pending' AND LOWER(payment_method) != 'cod') as pending_refunds
+            COUNT(*) FILTER (
+                WHERE (refund_status = 'Pending' OR refund_status IS NULL) 
+                AND (LOWER(payment_method) != 'cod' OR is_returned_order = TRUE OR status LIKE 'Return%' OR status IN ('Returned', 'Refunded', 'Received at Homved'))
+            ) as pending_refunds
          FROM orders`
     );
     return result.rows[0];
@@ -388,7 +400,7 @@ exports.getCancelledOrdersStats = async () => {
 exports.getOrdersByUser = async (userId) => {
     // Use json_agg to avoid N+1 query problem and improve performance
     const orderResult = await pool.query(
-        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+        `SELECT o.*, u.fullname as customer_name, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
@@ -410,7 +422,7 @@ exports.getOrdersByUser = async (userId) => {
 
 exports.getOrderById = async (orderId) => {
     const orderResult = await pool.query(
-        `SELECT o.*, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+        `SELECT o.*, u.fullname as customer_name, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
@@ -508,7 +520,8 @@ exports.requestReturnReplace = async (orderId, userId, data) => {
                 refund_bank_account = $6::text,
                 refund_ifsc_code = $7::text,
                 refund_holder_name = $8::text,
-                is_returned_order = $9::boolean
+                is_returned_order = $9::boolean,
+                refund_status = CASE WHEN $9::boolean = TRUE THEN COALESCE(refund_status, 'Pending') ELSE refund_status END
             WHERE id = $1::uuid`,
             [
                 orderId,
@@ -932,7 +945,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             updateParams = [orderId, status, paymentStatus || 'Paid'];
         } else if (status.includes('Return Approved') || status.includes('Return Rejected') ||
             status.includes('Replace Approved') || status.includes('Replace Rejected') ||
-            status === 'Received at Homved' || status === 'Refunded' || status === 'Replaced') {
+            status === 'Received at Homved' || status === 'Refunded' || status === 'Replaced' ||
+            status === 'Returned' || status === 'Return Processing') {
 
             const isRejected = status.includes('Rejected') || status.includes('Un-Approved');
             const isApproved = status.includes('Approved');
@@ -943,14 +957,14 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 if (!['Refunded', 'Completed'].includes(refundStatusVal)) {
                     refundStatusVal = 'Refunded';
                 }
-            } else if (status === 'Return Approved') {
-                refundStatusVal = 'Pending';
+            } else if (status === 'Return Approved' || status === 'Returned') {
+                refundStatusVal = oldOrder.refund_status || 'Pending';
             } else if (status === 'Refunded') {
                 refundStatusVal = 'Refunded';
             }
 
-            const productReceivedVal = (status === 'Received at Homved') ? true : oldIsProductReceived;
-            const logisticsStatusVal = (status === 'Received at Homved') ? 'Received at Homved' : oldOrder.logistics_status;
+            const productReceivedVal = (status === 'Received at Homved' || status === 'Returned') ? true : oldIsProductReceived;
+            const logisticsStatusVal = (status === 'Received at Homved' || status === 'Returned') ? 'Received at Homved' : oldOrder.logistics_status;
 
             // PARTIAL UPDATE: If itemIds are provided, update those specific items
             if (itemIds && itemIds.length > 0) {
@@ -994,6 +1008,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                            refund_status = $4::text,
                            is_product_received = $5::boolean,
                            logistics_status = $6::text,
+                           is_returned_order = CASE WHEN $2::text IN ('Return Approved', 'Returned', 'Received at Homved', 'Return Processing') THEN TRUE ELSE is_returned_order END,
                            payment_status = CASE 
                                               WHEN $2::text = 'Refunded' THEN 'Refunded'
                                               WHEN $7::text IS NOT NULL THEN $7::text
@@ -1071,8 +1086,10 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                                             WHEN $3::text IS NOT NULL THEN $3::text
                                             ELSE payment_status 
                                           END,
-                           is_product_received = CASE WHEN $2::text = 'Received at Homved' THEN TRUE ELSE is_product_received END,
-                           logistics_status = CASE WHEN $2::text = 'Received at Homved' THEN 'Received at Homved' ELSE logistics_status END,
+                           is_returned_order = CASE WHEN $2::text IN ('Returned', 'Return Approved', 'Received at Homved') THEN TRUE ELSE is_returned_order END,
+                           refund_status = CASE WHEN $2::text IN ('Returned', 'Return Approved') THEN COALESCE(refund_status, 'Pending') ELSE refund_status END,
+                           is_product_received = CASE WHEN $2::text IN ('Received at Homved', 'Returned') THEN TRUE ELSE is_product_received END,
+                           logistics_status = CASE WHEN $2::text IN ('Received at Homved', 'Returned') THEN 'Received at Homved' ELSE logistics_status END,
                            updated_at = NOW() WHERE id = $1::uuid RETURNING *`;
             updateParams = [orderId, status, paymentStatus];
         }
@@ -1120,7 +1137,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 await client.query(
                     `UPDATE order_items 
                      SET status = 'Returned' 
-                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested' OR status = 'Delivered')`,
                     [orderId]
                 );
             }
@@ -1378,6 +1395,12 @@ exports.updateRefundStatus = async (orderId, refundData) => {
                 }
             } else if (!txnId) {
                 throw new Error('Transaction ID is mandatory for finalizing online refunds.');
+            }
+        } else if (!isOnline && transitioningToFinal) {
+            // For COD orders, refund is completed via bank transfer / UPI.
+            // If admin left Txn ID empty or AUTO, generate a clean reference ID.
+            if (!finalTxnId || finalTxnId === 'AUTO') {
+                finalTxnId = 'COD-REF-' + Math.random().toString(36).substring(2, 10).toUpperCase();
             }
         }
 

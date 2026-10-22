@@ -41,6 +41,6 @@ exports.addProductReview = async (req, res) => {
         });
     } catch (error) {
         console.error('Error adding review:', error);
-        res.status(500).json({ success: false, message: 'Server error' });
+        res.status(500).json({ success: false, message: error.message || 'Server error' });
     }
 };
