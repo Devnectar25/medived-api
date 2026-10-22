@@ -92,8 +92,22 @@ exports.generateInvoiceHTML = async (orderId) => {
             month: 'long',
             year: 'numeric'
         }),
-        userName: order.shippingAddress ? `${order.shippingAddress.firstName} ${order.shippingAddress.lastName}` : (user.username || 'Customer'),
-        userAddress: order.full_address || `${order.shippingAddress?.address || ''}, ${order.shippingAddress?.city || ''}, ${order.shippingAddress?.state || ''} - ${order.shippingAddress?.pincode || ''}`,
+        userName: order.shippingAddress ? `${order.shippingAddress.firstName} ${order.shippingAddress.lastName}`.trim() : (order.customer_name || user.fullname || user.username || 'Customer'),
+        userAddress: (() => {
+            if (order.shippingAddress?.address) {
+                return `${order.shippingAddress.address}, ${order.shippingAddress?.city || ''}, ${order.shippingAddress?.state || ''} - ${order.shippingAddress?.pincode || ''}`;
+            }
+            let rawAddr = (order.full_address || '').trim();
+            if (rawAddr.includes(',')) {
+                const cIdx = rawAddr.indexOf(',');
+                const before = rawAddr.substring(0, cIdx).trim();
+                const after = rawAddr.substring(cIdx + 1).trim();
+                if (before && !/\d/.test(before) && after) {
+                    rawAddr = after;
+                }
+            }
+            return rawAddr || 'N/A';
+        })(),
         userPhone: order.shippingAddress?.phone || user.contactno || 'N/A',
         paymentMethod: order.payment_method ? order.payment_method.toUpperCase() : 'N/A',
         items: order.items.map(item => ({

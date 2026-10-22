@@ -47,14 +47,31 @@ exports.createReview = async (data) => {
         }
     }
 
-    // Check if the user has already rated/reviewed this product
+    // Check if the user has already rated/reviewed this product - if so, update their feedback
     const existingCheck = await pool.query(
         "SELECT srno FROM review WHERE productid = $1 AND username = $2",
         [productId, validUser]
     );
 
     if (existingCheck.rows.length > 0) {
-        throw new Error("You have already reviewed this product.");
+        const updateResult = await pool.query(
+            `UPDATE review 
+             SET rating = $1, review = $2, date = CURRENT_DATE 
+             WHERE srno = $3 
+             RETURNING *`,
+            [rating, review, existingCheck.rows[0].srno]
+        );
+
+        // Update product rating and review count
+        await pool.query(
+            `UPDATE products 
+             SET rating = (SELECT AVG(rating) FROM review WHERE productid = $1),
+                 reviews = (SELECT COUNT(*)::text FROM review WHERE productid = $1)
+             WHERE product_id = $1`,
+            [productId]
+        );
+
+        return updateResult.rows[0];
     }
 
     const result = await pool.query(
