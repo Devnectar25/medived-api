@@ -775,7 +775,7 @@ const getDashboardEntityCounts = async () => {
       pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status IN ('Shipped', 'Confirmed')"),
       pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Out for Delivery'"),
       pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status IN ('Cancelled', 'Returned', 'Refunded', 'Cancellation Requested', 'Return Requested', 'Return Approved', 'Return Rejected', 'Replace Requested', 'Replace Approved', 'Replace Rejected', 'Received at Homved', 'Restocked')"),
-      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND payment_status = 'Pending'")
+      pool.query("SELECT COUNT(*) as count FROM orders WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND payment_status = 'Pending' AND status NOT IN ('Cancelled', 'Returned', 'Refunded')")
     ]);
 
     return {
