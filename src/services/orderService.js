@@ -233,6 +233,8 @@ exports.getAllOrders = async (options = {}) => {
     if (paymentStatus && paymentStatus !== 'all') {
         if (paymentStatus === 'Refunded') {
             baseQuery += ` AND (o.payment_status = 'Refunded' OR o.refund_status IN ('Refunded', 'Completed'))`;
+        } else if (paymentStatus === 'Pending') {
+            baseQuery += ` AND o.payment_status = 'Pending' AND o.status NOT IN ('Cancelled', 'Returned') AND NOT (EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND oi.status = 'Cancelled') AND NOT EXISTS (SELECT 1 FROM order_items oi2 WHERE oi2.order_id = o.id AND (oi2.status IS NULL OR oi2.status NOT IN ('Cancelled', 'Returned'))))`;
         } else {
             baseQuery += ` AND o.payment_status = $${paramIndex}`;
             params.push(paymentStatus);
@@ -750,7 +752,7 @@ exports.getOrderStats = async () => {
             COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Out for Delivery') as out_for_delivery,
             COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Delivered') as delivered,
             COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status IN ('Cancelled', 'Returned', 'Refunded', 'Cancellation Requested', 'Return Requested', 'Return Approved', 'Return Rejected', 'Replace Requested', 'Replace Approved', 'Replace Rejected', 'Received at Homved', 'Restocked')) as canceled,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND payment_status = 'Pending') as pending_payment,
+            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND payment_status = 'Pending' AND status NOT IN ('Cancelled', 'Returned', 'Refunded')) as pending_payment,
             COUNT(*) FILTER (WHERE status = 'Return Request Processing') as return_requests,
             COUNT(*) FILTER (WHERE status = 'Replacement Request Processing') as replacement_requests,
             COUNT(*) FILTER (WHERE status IN ('Cancellation Requested', 'CANCEL_REQUESTED') OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED'))) as cancellation_requests
