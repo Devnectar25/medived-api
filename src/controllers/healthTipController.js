@@ -67,6 +67,15 @@ exports.getActive = async (req, res) => {
     }
 };
 
+exports.getHome = async (req, res) => {
+    try {
+        const tips = await healthTipService.getHomeHealthTips();
+        res.json(tips);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 exports.setActive = async (req, res) => {
     try {
         const tip = await healthTipService.setActiveHealthTip(req.params.id);
@@ -85,6 +94,20 @@ exports.setInactive = async (req, res) => {
         const tip = await healthTipService.setInactiveHealthTip(req.params.id);
         if (tip) {
             res.json({ message: "Health tip deactivated successfully", data: tip });
+        } else {
+            res.status(404).json({ message: "Health tip not found" });
+        }
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+exports.setShowOnHome = async (req, res) => {
+    try {
+        const { showOnHome } = req.body;
+        const tip = await healthTipService.setShowOnHome(req.params.id, showOnHome !== false);
+        if (tip) {
+            res.json({ message: "Show on home updated successfully", data: tip });
         } else {
             res.status(404).json({ message: "Health tip not found" });
         }
@@ -115,6 +138,13 @@ exports.uploadHealthTipImage = async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ success: false, message: "No file uploaded" });
+        }
+
+        if (req.file.size > 500 * 1024) {
+            return res.status(400).json({
+                success: false,
+                message: "Image size should be less than 500KB. Please upload a smaller file."
+            });
         }
 
         const publicUrl = await storageService.uploadImage(req.file, 'health_tips');

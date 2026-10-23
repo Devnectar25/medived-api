@@ -33,8 +33,15 @@ exports.updateProfile = async (req, res) => {
             return res.status(401).json({ success: false, message: 'User not identified' });
         }
 
-        if (phone !== undefined && (!phone || !phone.trim())) {
-            return res.status(400).json({ success: false, message: 'Mobile number is required' });
+        let cleanPhone = undefined;
+        if (phone !== undefined) {
+            cleanPhone = phone ? phone.toString().trim().replace(/\D/g, '') : '';
+            if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
+                cleanPhone = cleanPhone.slice(2);
+            }
+            if (!cleanPhone || !/^[6-9]\d{9}$/.test(cleanPhone)) {
+                return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number' });
+            }
         }
 
         const result = await pool.query(`
@@ -44,7 +51,7 @@ exports.updateProfile = async (req, res) => {
                 avatar_url = COALESCE($3, avatar_url)
             WHERE username = $4
             RETURNING username, emailid, fullname, contactno, avatar_url, member_since
-        `, [fullName || null, phone || null, avatar || null, username]);
+        `, [fullName || null, cleanPhone || null, avatar || null, username]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, message: 'User not found' });
@@ -67,3 +74,39 @@ exports.updateProfile = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to update profile', error: error.message });
     }
 };
+
+exports.getProfile = async (req, res) => {
+    try {
+        const username = req.user.id;
+        if (!username) {
+            return res.status(401).json({ success: false, message: 'User not identified' });
+        }
+
+        const result = await pool.query(`
+            SELECT username, emailid, fullname, contactno, avatar_url, member_since 
+            FROM public.users 
+            WHERE username = $1
+        `, [username]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        const row = result.rows[0];
+        const user = {
+            id: row.username,
+            email: row.emailid,
+            fullName: row.fullname || row.username,
+            phone: row.contactno,
+            avatar: row.avatar_url,
+            memberSince: row.member_since,
+            twoFactorEnabled: true
+        };
+
+        res.json({ success: true, user });
+    } catch (error) {
+        console.error('Error fetching user profile:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch profile', error: error.message });
+    }
+};
+

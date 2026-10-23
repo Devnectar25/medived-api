@@ -14,23 +14,37 @@ exports.createOrder = async (req, res) => {
 
 exports.getAllOrders = async (req, res) => {
     try {
-        const page = parseInt(req.query.page) || 1;
+        let page = parseInt(req.query.page) || 1;
+        if (page < 1) page = 1;
         const limit = parseInt(req.query.limit) || 10;
-        const offset = (page - 1) * limit;
+        let offset = (page - 1) * limit;
         const status = req.query.status;
         const paymentStatus = req.query.paymentStatus;
         const type = req.query.type;
         const userName = req.query.userName;
         const orderNumber = req.query.orderNumber;
+        const paymentType = req.query.paymentType;
+        const dateFrom = req.query.dateFrom;
+        const dateTo = req.query.dateTo;
 
-        const result = await orderService.getAllOrders({ limit, offset, status, paymentStatus, type, userName, orderNumber });
+        let result = await orderService.getAllOrders({ limit, offset, status, paymentStatus, type, userName, orderNumber, paymentType, dateFrom, dateTo });
+        
+        const totalPages = Math.ceil(result.totalCount / limit) || 1;
+        let currentPage = page;
+
+        // Auto-heal: If page requested exceeds totalPages (e.g. user was on page 10 and applied filter/search that only has 1 page)
+        if (result.totalCount > 0 && page > totalPages) {
+            currentPage = 1;
+            result = await orderService.getAllOrders({ limit, offset: 0, status, paymentStatus, type, userName, orderNumber, paymentType, dateFrom, dateTo });
+        }
+
         res.status(200).json({
             success: true,
             data: result.orders,
             pagination: {
                 totalOrders: result.totalCount,
-                currentPage: page,
-                totalPages: Math.ceil(result.totalCount / limit),
+                currentPage: currentPage,
+                totalPages: totalPages,
                 limit: limit
             }
         });
@@ -141,7 +155,21 @@ exports.updateOrderStatus = async (req, res) => {
             }
         }
 
-        const updatedOrder = await orderService.updateOrderStatus(id, status, cancelReason, bankDetails, paymentStatus, itemIds);
+        let cancelledBy = null;
+        if (status === 'Cancelled') {
+            if (isAdmin) {
+                // If the user previously requested cancellation, it was customer-initiated
+                if (order.status === 'Cancellation Requested' || order.status === 'CANCEL_REQUESTED') {
+                    cancelledBy = 'customer';
+                } else {
+                    cancelledBy = 'admin';
+                }
+            } else {
+                cancelledBy = 'customer';
+            }
+        }
+
+        const updatedOrder = await orderService.updateOrderStatus(id, status, cancelReason, bankDetails, paymentStatus, itemIds, cancelledBy);
         res.status(200).json({ success: true, data: updatedOrder });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

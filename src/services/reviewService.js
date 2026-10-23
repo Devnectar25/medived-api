@@ -2,22 +2,32 @@ const pool = require("../config/db");
 
 exports.getReviewsByProduct = async (productId) => {
     const result = await pool.query(
-        `SELECT r.*, u.username as user_name
+        `SELECT r.*, u.username as user_name, u.fullname
          FROM review r
-         LEFT JOIN users u ON r.username = u.username
+         LEFT JOIN users u ON r.username = u.username OR r.username = u.emailid
          WHERE r.productid = $1
          ORDER BY r.date DESC`,
         [productId]
     );
 
-    return result.rows.map(row => ({
-        id: row.srno,
-        user: row.user_name || row.username || 'Anonymous',
-        rating: row.rating,
-        comment: row.review,
-        date: row.date,
-        verified: true
-    }));
+    return result.rows.map(row => {
+        let displayName = row.fullname && !row.fullname.includes('@')
+            ? row.fullname
+            : (row.user_name || row.username || 'Anonymous');
+
+        if (displayName && displayName.includes('@')) {
+            displayName = displayName.split('@')[0];
+        }
+
+        return {
+            id: row.srno,
+            user: displayName,
+            rating: row.rating,
+            comment: row.review,
+            date: row.date,
+            verified: true
+        };
+    });
 };
 
 exports.createReview = async (data) => {
@@ -25,9 +35,11 @@ exports.createReview = async (data) => {
 
     // Ensure user exists to satisfy FK constraint
     let validUser = username;
-    const userCheck = await pool.query("SELECT username FROM users WHERE username = $1", [username]);
+    const userCheck = await pool.query("SELECT username FROM users WHERE username = $1 OR emailid = $1", [username]);
 
-    if (userCheck.rows.length === 0) {
+    if (userCheck.rows.length > 0) {
+        validUser = userCheck.rows[0].username;
+    } else {
         try {
             // Create the user on the fly to satisfy constraint
             const email = `${(username || 'guest').toLowerCase().replace(/\s+/g, '')}@example.com`;

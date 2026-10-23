@@ -5,24 +5,33 @@ exports.getAllFAQs = async (req, res) => {
         const query = `
             SELECT * FROM faqs 
             WHERE is_active = true 
-            ORDER BY category, display_order ASC
+            ORDER BY display_order ASC, id ASC
         `;
         const result = await pool.query(query);
 
-        // Group by category for easier frontend consumption
-        const grouped = result.rows.reduce((acc, faq) => {
-            const cat = faq.category || 'General';
-            if (!acc[cat]) {
-                acc[cat] = [];
+        // Deduplicate and group by category
+        const seenQuestions = new Set();
+        const uniqueRows = [];
+        const grouped = {};
+
+        for (const faq of result.rows) {
+            const key = `${(faq.category || 'General').toLowerCase()}___${faq.question.trim().toLowerCase()}`;
+            if (!seenQuestions.has(key)) {
+                seenQuestions.add(key);
+                uniqueRows.push(faq);
+
+                const cat = faq.category || 'General';
+                if (!grouped[cat]) {
+                    grouped[cat] = [];
+                }
+                grouped[cat].push(faq);
             }
-            acc[cat].push(faq);
-            return acc;
-        }, {});
+        }
 
         res.status(200).json({
             success: true,
             data: grouped,
-            all: result.rows
+            all: uniqueRows
         });
 
     } catch (err) {

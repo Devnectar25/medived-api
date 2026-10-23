@@ -42,10 +42,11 @@ exports.generateInvoiceHTML = async (orderId) => {
     const user = userResult.rows[0] || {};
 
     // 3. Prepare data for Handlebars mapping
-    const subtotal = parseFloat(order.subtotal || 0);
+    const itemsSum = (order.items || []).reduce((sum, item) => sum + ((parseFloat(item.price) || 0) * (parseInt(item.quantity) || 1)), 0);
+    const subtotal = parseFloat(order.initial_subtotal || order.subtotal || 0) || itemsSum;
     const discountAmount = parseFloat(order.discount_amount || 0);
     const taxRate = 18; // Standard GST
-    const total = parseFloat(order.total || 0);
+    const total = parseFloat(order.original_total ? (parseFloat(order.original_total) - discountAmount) : (order.total || 0)) || (subtotal + parseFloat(order.shipping || 0) - discountAmount);
     
     // Calculate tax-inclusive subtotal if needed or just use as is
     // For this template, we'll follow the provided subtotal - discount = total logic

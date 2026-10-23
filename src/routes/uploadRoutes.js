@@ -2,7 +2,25 @@ const express = require('express');
 const router = express.Router();
 const uploadController = require('../controllers/uploadController');
 
-router.post('/upload-image', uploadController.uploadMiddleware, uploadController.uploadImage);
+router.post('/upload-image', (req, res, next) => {
+    uploadController.uploadMiddleware(req, res, (err) => {
+        if (err) {
+            console.error("Multer Error during image upload:", err);
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(400).json({
+                    success: false,
+                    message: "Image size should be less than 500KB. Please upload a smaller file."
+                });
+            }
+            return res.status(400).json({ 
+                success: false, 
+                message: err.message || "Failed to upload image",
+                error: err.message 
+            });
+        }
+        next();
+    });
+}, uploadController.uploadImage);
 
 router.post('/upload-video', (req, res, next) => {
     uploadController.uploadVideoMiddleware(req, res, (err) => {
