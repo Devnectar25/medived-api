@@ -126,7 +126,7 @@ exports.getOrderById = async (req, res) => {
 exports.updateOrderStatus = async (req, res) => {
     try {
         const { id } = req.params;
-        const { status, cancelReason, bankDetails, paymentStatus, itemIds } = req.body;
+        const { status, cancelReason, bankDetails, paymentStatus, itemIds, trackingNumber } = req.body;
 
         const order = await orderService.getOrderById(id);
         if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
@@ -169,7 +169,7 @@ exports.updateOrderStatus = async (req, res) => {
             }
         }
 
-        const updatedOrder = await orderService.updateOrderStatus(id, status, cancelReason, bankDetails, paymentStatus, itemIds, cancelledBy);
+        const updatedOrder = await orderService.updateOrderStatus(id, status, cancelReason, bankDetails, paymentStatus, itemIds, cancelledBy, trackingNumber);
         res.status(200).json({ success: true, data: updatedOrder });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -285,6 +285,25 @@ exports.updateOrderItemStatus = async (req, res) => {
 
         const updatedItem = await orderService.updateOrderItemStatus(id, itemId, status);
         res.status(200).json({ success: true, data: updatedItem });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+exports.getOrderApprovalMode = async (req, res) => {
+    try {
+        const mode = await orderService.getOrderApprovalMode();
+        res.status(200).json({ success: true, mode });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+exports.setOrderApprovalMode = async (req, res) => {
+    try {
+        const { mode } = req.body;
+        const updatedMode = await orderService.setOrderApprovalMode(mode);
+        res.status(200).json({ success: true, mode: updatedMode });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
