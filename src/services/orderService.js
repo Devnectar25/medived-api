@@ -83,7 +83,11 @@ exports.createOrder = async (orderData) => {
             if (finalTotal < 0) finalTotal = 0;
         }
 
-        // ── STEP 2: Insert order with coupon fields ────────────────────────────
+        // ── STEP 2: Insert order with coupon fields & approval mode ───────────
+        const approvalMode = await exports.getOrderApprovalMode();
+        // Automatic: COD orders auto-confirmed; Manual: stays Pending
+        const initialStatus = (approvalMode === 'automatic' && paymentMethod === 'cod') ? 'Confirmed' : 'Pending';
+
         const orderResult = await client.query(
             `INSERT INTO orders (
                 user_id, order_number, address_id, payment_method, payment_status, payment_type,
@@ -91,7 +95,7 @@ exports.createOrder = async (orderData) => {
                 discount_amount, total,
                 coupon_code, coupon_id,
                 status, tracking_number, estimated_delivery, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11, $12, $13, 'Pending', $14, $15, NOW(), NOW())
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11, $12, $13, $16, $14, $15, NOW(), NOW())
             RETURNING *`,
             [
                 userId,                          // $1
@@ -99,7 +103,7 @@ exports.createOrder = async (orderData) => {
                 addressId,                       // $3
                 paymentMethod,                   // $4
                 paymentStatus || 'Pending',      // $5
-                paymentType || (paymentMethod === 'cod' ? 'COD' : 'Paid'), // $6
+                paymentType || (paymentMethod === 'cod' ? 'COD' : 'Pending'), // $6
                 dbSubtotal,                      // $7  — server-computed cart sum, never client value
                 originalTotal,                   // $8  — pre-discount total (dbSubtotal + shipping)
                 shipping || 0,                   // $9
@@ -108,7 +112,8 @@ exports.createOrder = async (orderData) => {
                 validatedCouponCode || null,     // $12 — normalized code string (kept for history)
                 couponId,                        // $13 — FK → coupons.id; null if no coupon
                 trackingNumber,                  // $14
-                estimatedDelivery                // $15
+                estimatedDelivery,               // $15
+                initialStatus                    // $16
             ]
         );
 
@@ -778,7 +783,7 @@ exports.getOrderStats = async () => {
     };
 };
 
-exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDetails = null, paymentStatus = null, itemIds = null, cancelledBy = null) => {
+exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDetails = null, paymentStatus = null, itemIds = null, cancelledBy = null, trackingNumber = null) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -833,10 +838,16 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 const isCancelling = (status === 'Cancelled' || status === 'CANCEL_APPROVED' || status === 'Return Approved' || status === 'Returned' || status === 'Refunded');
                 const wasCancelling = (originalItem.status === 'Cancelled' || originalItem.status === 'CANCEL_APPROVED' || originalItem.status === 'Return Approved' || originalItem.status === 'Returned' || originalItem.status === 'Refunded');
 
+                // Replacement dispatch: decrement product stock for the shipped replacement unit
+                const isReplacementDispatch = (status === 'Replacement Shipped' || status === 'Replaced');
+                const wasReplacementDispatch = (originalItem.status === 'Replacement Shipped' || originalItem.status === 'Replaced');
+
                 let stockAdjustment = 0;
                 if (isCancelling && !wasCancelling) {
                     stockAdjustment = cancelQty;
                 } else if (!isCancelling && wasCancelling) {
+                    stockAdjustment = -cancelQty;
+                } else if (isReplacementDispatch && !wasReplacementDispatch) {
                     stockAdjustment = -cancelQty;
                 }
 
@@ -881,7 +892,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                          refund_bank_account = COALESCE($5::text, refund_bank_account),
                          refund_ifsc_code = COALESCE($6::text, refund_ifsc_code),
                          refund_holder_name = COALESCE($7::text, refund_holder_name),
-                         refund_status = COALESCE(refund_status, 'Pending'),
+                         refund_status = CASE WHEN LOWER(payment_method) = 'cod' THEN NULL ELSE COALESCE(refund_status, 'Pending') END,
                          payment_status = COALESCE($8::text, payment_status)
                      WHERE id = $1::uuid`,
                     [
@@ -1014,7 +1025,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                                refund_bank_account = COALESCE($5::text, refund_bank_account),
                                refund_ifsc_code = COALESCE($6::text, refund_ifsc_code),
                                refund_holder_name = COALESCE($7::text, refund_holder_name),
-                               refund_status = COALESCE(refund_status, 'Pending'),
+                               refund_status = CASE WHEN LOWER(payment_method) = 'cod' THEN NULL ELSE COALESCE(refund_status, 'Pending') END,
                                payment_status = COALESCE($8::text, payment_status)
                            WHERE id = $1::uuid RETURNING *`;
             updateParams = [
@@ -1125,7 +1136,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                     let itemsToReplace = [];
                     if (itemIds && itemIds.length > 0) {
                         const ids = itemIds.map(i => i.id);
-                        const itemsResult = await client.query('SELECT * FROM order_items WHERE order_id = $1 AND id = ANY($2::integer[])', [orderId, ids]);
+                        const isUuid = typeof ids[0] === 'string' && ids[0].length === 36;
+                        const itemsResult = await client.query(`SELECT * FROM order_items WHERE order_id = $1 AND id = ANY($2::${isUuid ? 'uuid' : 'integer'}[])`, [orderId, ids]);
                         itemsToReplace = itemsResult.rows;
                     } else {
                         const itemsResult = await client.query('SELECT * FROM order_items WHERE order_id = $1 AND (status LIKE \'%Replace Requested%\' OR status LIKE \'%Request Processing%\')', [orderId]);
@@ -1137,8 +1149,10 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 }
 
                 // Mark items in ORIGINAL order as 'Replace Approved'
-                const whereClause = (itemIds && itemIds.length > 0) ? `order_id = $1 AND id = ANY($2::integer[])` : `order_id = $1 AND (status LIKE '%Replace Requested%' OR status LIKE '%Request Processing%')`;
-                const params = (itemIds && itemIds.length > 0) ? [orderId, itemIds.map(i => i.id)] : [orderId];
+                const ids = (itemIds && itemIds.length > 0) ? itemIds.map(i => i.id) : [];
+                const isUuid = ids.length > 0 && typeof ids[0] === 'string' && ids[0].length === 36;
+                const whereClause = (itemIds && itemIds.length > 0) ? `order_id = $1 AND id = ANY($2::${isUuid ? 'uuid' : 'integer'}[])` : `order_id = $1 AND (status LIKE '%Replace Requested%' OR status LIKE '%Request Processing%')`;
+                const params = (itemIds && itemIds.length > 0) ? [orderId, ids] : [orderId];
                 await client.query(`UPDATE order_items SET status = 'Replace Approved' WHERE ${whereClause}`, params);
             }
         } else if (status === 'Restore') {
@@ -1398,6 +1412,36 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             }
         }
 
+        // ── INVENTORY DECREMENT FOR REPLACEMENT DISPATCH (Order-Level) ────
+        if (status === 'Replacement Shipped' && oldStatus !== 'Replacement Shipped' && (!itemIds || itemIds.length === 0)) {
+            console.log(`[INVENTORY AUTOMATION] Decrementing stock for replacement dispatch of order ${orderId}`);
+            const replaceItemsRes = await client.query(
+                `SELECT product_id, quantity FROM order_items 
+                 WHERE order_id = $1::uuid 
+                 AND (status LIKE '%Replace%' OR status LIKE '%Replacement%')`,
+                [orderId]
+            );
+            for (const rItem of replaceItemsRes.rows) {
+                await client.query(
+                    `UPDATE products 
+                     SET stock_quantity = GREATEST(0, stock_quantity - $2),
+                         quantity = GREATEST(0, quantity - $2),
+                         instock = (CASE WHEN stock_quantity - $2 > 0 THEN true ELSE false END),
+                         updated_at = NOW()
+                     WHERE product_id = $1::integer`,
+                    [rItem.product_id, rItem.quantity]
+                );
+            }
+        }
+
+        // ── UPDATE TRACKING NUMBER IF PROVIDED ──────────────────────────
+        if (trackingNumber) {
+            await client.query(
+                `UPDATE orders SET tracking_number = $2::text, updated_at = NOW() WHERE id = $1::uuid`,
+                [orderId, trackingNumber]
+            );
+        }
+
         // ── AUTOMATED FINANCIAL REFUND (HOMVED-RR-07) ───────────────────
         // NOTE: Automated Razorpay refund on Return Approval was removed from here.
         // It has been moved to updateRefundStatus to process refunds through the Refund Desk.
@@ -1598,10 +1642,18 @@ exports.updateRefundStatus = async (orderId, refundData) => {
             }
         }
 
-        // Placeholder for Notification Logic
+        // Notification Logic for Refund Desk
         if (notifyCustomer) {
-            console.log(`[Notification] Would send notification to user for order ${orderId} with status ${refundStatus}`);
-            // e.g., msgService.sendRefundUpdate(order.user_id, refundStatus, adminNote);
+            try {
+                const fullOrder = await exports.getOrderById(orderId);
+                const refundAmt = Math.round(fullOrder?.refundAmount || fullOrder?.total || 0);
+                const customMsg = adminNote 
+                    ? `Hi ${fullOrder?.shippingAddress?.firstName || 'Customer'}, your refund of ₹${refundAmt} for Order #${fullOrder?.orderNumber} is marked as ${refundStatus}. Note: ${adminNote}`
+                    : `Hi ${fullOrder?.shippingAddress?.firstName || 'Customer'}, refund of ₹${refundAmt} for your Order #${fullOrder?.orderNumber} has been updated to ${refundStatus}.`;
+                await whatsappService.sendOrderUpdateNotification(fullOrder, (refundStatus === 'Completed' || refundStatus === 'Refunded') ? 'Refunded' : refundStatus, customMsg);
+            } catch (notifyErr) {
+                console.error('[Notification] Failed to send customer refund notification:', notifyErr.message);
+            }
         }
 
         await client.query('COMMIT');
@@ -1757,6 +1809,19 @@ exports.updateOrderItemStatus = async (orderId, itemId, status) => {
         const updateQuery = `UPDATE order_items SET status = $1 WHERE id = $2::uuid RETURNING *`;
         const result = await client.query(updateQuery, [status, itemId]);
 
+        if (status === 'Replacement Shipped') {
+            const item = result.rows[0];
+            await client.query(
+                `UPDATE products 
+                 SET stock_quantity = GREATEST(0, stock_quantity - $2),
+                     quantity = GREATEST(0, quantity - $2),
+                     instock = (CASE WHEN stock_quantity - $2 > 0 THEN true ELSE false END),
+                     updated_at = NOW()
+                 WHERE product_id = $1::integer`,
+                [item.product_id, item.quantity]
+            );
+        }
+
         await client.query('COMMIT');
         return result.rows[0];
     } catch (error) {
@@ -1765,4 +1830,27 @@ exports.updateOrderItemStatus = async (orderId, itemId, status) => {
     } finally {
         client.release();
     }
+};
+
+exports.getOrderApprovalMode = async () => {
+    try {
+        const res = await pool.query(`SELECT value FROM app_settings WHERE key = 'order_approval_mode'`);
+        if (res.rows.length > 0) {
+            return res.rows[0].value;
+        }
+    } catch (e) {
+        console.error('Error fetching order_approval_mode:', e.message);
+    }
+    return 'automatic';
+};
+
+exports.setOrderApprovalMode = async (mode) => {
+    const validMode = mode === 'manual' ? 'manual' : 'automatic';
+    await pool.query(
+        `INSERT INTO app_settings (key, value, updated_at) 
+         VALUES ('order_approval_mode', $1, NOW()) 
+         ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+        [validMode]
+    );
+    return validMode;
 };

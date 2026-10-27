@@ -6,6 +6,8 @@ const { protect, authorize } = require('../middlewares/authMiddleware');
 router.use(protect);
 
 router.get('/', authorize('admin'), orderController.getAllOrders);
+router.get('/admin/approval-mode', authorize('admin'), orderController.getOrderApprovalMode);
+router.post('/admin/approval-mode', authorize('admin'), orderController.setOrderApprovalMode);
 router.get('/admin/cancelled-orders', authorize('admin'), orderController.getCancelledOrders);
 router.get('/stats', authorize('admin'), orderController.getOrderStats);
 router.post('/', orderController.createOrder);

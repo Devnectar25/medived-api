@@ -95,16 +95,24 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
             [userId, internalOrderId, razorpay_payment_id, amount]
         );
 
-        // 3. Update payment_status and store payment_id (for future refunds)
+        // 3. Update payment_status and store payment_id (respecting approval mode)
+        let approvalMode = 'automatic';
+        try {
+            const modeRes = await client.query(`SELECT value FROM app_settings WHERE key = 'order_approval_mode'`);
+            if (modeRes.rows.length > 0) approvalMode = modeRes.rows[0].value;
+        } catch (e) {}
+        const newStatus = approvalMode === 'manual' ? 'Pending' : 'Confirmed';
+
         const orderResult = await client.query(
             `UPDATE orders 
-             SET status = 'Pending', 
+             SET status = $3, 
                  payment_status = 'Paid', 
+                 payment_type = 'Paid',
                  razorpay_payment_id = $2,
                  updated_at = NOW() 
              WHERE id = $1 
              RETURNING *`,
-            [internalOrderId, razorpay_payment_id]
+            [internalOrderId, razorpay_payment_id, newStatus]
         );
 
         await client.query('COMMIT');
@@ -152,15 +160,23 @@ exports.handleWebhook = async (payload, signature) => {
                         [order.user_id, order.id, razorpayPaymentId, amount]
                     );
 
-                    // 2. Update order (set payment_status to Paid, keep status Pending, store payment_id)
+                    // 2. Update order (set payment_status to Paid, set status based on approval mode, store payment_id)
+                    let webhookApprovalMode = 'automatic';
+                    try {
+                        const modeRes = await client.query(`SELECT value FROM app_settings WHERE key = 'order_approval_mode'`);
+                        if (modeRes.rows.length > 0) webhookApprovalMode = modeRes.rows[0].value;
+                    } catch (e) {}
+                    const webhookStatus = webhookApprovalMode === 'manual' ? 'Pending' : 'Confirmed';
+
                     await client.query(
                         `UPDATE orders 
-                         SET status = 'Pending', 
+                         SET status = $3, 
                              payment_status = 'Paid', 
+                             payment_type = 'Paid',
                              razorpay_payment_id = $2,
                              updated_at = NOW() 
                          WHERE id = $1`,
-                        [order.id, razorpayPaymentId]
+                        [order.id, razorpayPaymentId, webhookStatus]
                     );
                 }
             }

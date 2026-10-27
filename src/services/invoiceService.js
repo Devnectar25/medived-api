@@ -165,15 +165,55 @@ exports.generateInvoicePDF = async (orderId) => {
     });
     */
 
-    // NEW CODE - VERCEL COMPATIBLE
+    // NEW CODE - RESILIENT LOCAL & VERCEL COMPATIBLE
     let browser;
     try {
         const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL;
+
+        // Dynamic executable detection
+        let executablePath = null;
+        if (process.env.CHROME_BIN && fs.existsSync(process.env.CHROME_BIN)) {
+            executablePath = process.env.CHROME_BIN;
+        } else if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+            executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+        } else if (isProd) {
+            executablePath = await chromium.executablePath();
+        } else {
+            const localCandidates = [
+                'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+                'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+                process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Google\\Chrome\\Application\\chrome.exe') : null,
+                process.env.PROGRAMFILES ? path.join(process.env.PROGRAMFILES, 'Google\\Chrome\\Application\\chrome.exe') : null,
+                'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+                'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+                '/usr/bin/google-chrome',
+                '/usr/bin/chromium-browser',
+                '/usr/bin/chromium',
+                '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+            ].filter(Boolean);
+
+            for (const candidate of localCandidates) {
+                if (fs.existsSync(candidate)) {
+                    executablePath = candidate;
+                    break;
+                }
+            }
+
+            if (!executablePath) {
+                try {
+                    executablePath = await chromium.executablePath();
+                } catch (e) {}
+            }
+
+            if (!executablePath) {
+                executablePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+            }
+        }
         
         browser = await puppeteer.launch({
             args: isProd ? chromium.args : ['--no-sandbox', '--disable-setuid-sandbox'],
             defaultViewport: chromium.defaultViewport,
-            executablePath: isProd ? await chromium.executablePath() : 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', // Fallback for local
+            executablePath,
             headless: isProd ? chromium.headless : 'new',
         });
 
