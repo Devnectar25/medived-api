@@ -981,6 +981,18 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         refund_ifsc_code = COALESCE($4::text, refund_ifsc_code),
                         refund_holder_name = COALESCE($5::text, refund_holder_name),
                         refund_status = $6::text,
+                        payment_status = CASE 
+                            WHEN $7::text = 'Delivered' THEN 'Paid'
+                            ELSE payment_status
+                        END,
+                        payment_type = CASE 
+                            WHEN $7::text = 'Delivered' THEN 'Paid'
+                            ELSE payment_type
+                        END,
+                        delivered_at = CASE 
+                            WHEN $7::text = 'Delivered' AND delivered_at IS NULL THEN NOW() 
+                            ELSE delivered_at 
+                        END,
                         updated_at = NOW()
                      WHERE id = $1::uuid`,
                     [
@@ -1041,7 +1053,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             ];
         } else if (status === 'Delivered') {
             console.log(`[OrderService] Marking order ${orderId} as Delivered and Payment as ${paymentStatus || 'Paid'}`);
-            updateQuery = `UPDATE orders SET status = $2, original_status = $2, payment_status = $3, delivered_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
+            updateQuery = `UPDATE orders SET status = $2, original_status = $2, payment_status = $3, payment_type = 'Paid', delivered_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
             updateParams = [orderId, status, paymentStatus || 'Paid'];
         } else if (status.includes('Return Approved') || status.includes('Return Rejected') ||
             status.includes('Replace Approved') || status.includes('Replace Rejected') ||
@@ -1189,6 +1201,14 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                                             WHEN $3::text IS NOT NULL THEN $3::text
                                             ELSE payment_status 
                                           END,
+                           payment_type = CASE 
+                                          WHEN $2::text = 'Delivered' THEN 'Paid'
+                                          ELSE payment_type 
+                                        END,
+                           delivered_at = CASE 
+                                          WHEN $2::text = 'Delivered' AND delivered_at IS NULL THEN NOW() 
+                                          ELSE delivered_at 
+                                        END,
                            is_returned_order = CASE WHEN $2::text IN ('Returned', 'Return Approved', 'Received at Homved', 'Return Request Processing', 'Return Requested', 'Partially Returning', 'Return Processing', 'Return Collected') THEN TRUE ELSE is_returned_order END,
                            refund_status = CASE WHEN $2::text IN ('Returned', 'Return Approved', 'Return Request Processing', 'Return Requested', 'Partially Returning', 'Return Processing', 'Return Collected') THEN COALESCE(refund_status, 'Pending') ELSE refund_status END,
                            is_product_received = CASE WHEN $2::text IN ('Received at Homved', 'Returned') THEN TRUE ELSE is_product_received END,
