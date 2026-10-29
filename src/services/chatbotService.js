@@ -102,8 +102,11 @@ function extractKeywords(tokens) {
         'what', 'which', 'who', 'how', 'when', 'where', 'please', 'tell',
         'about', 'any', 'some', 'get', 'give', 'show', 'want', 'need',
         'just', 'also', 'else', 'other', 'another',
+        'suggest', 'suggestion', 'suggestions', 'suggests', 'recommend', 'recommendation', 'recommendations', 'recommends',
+        'find', 'search', 'buy', 'purchase', 'looking', 'look', 'best', 'good', 'top',
         'का', 'की', 'के', 'में', 'पर', 'से', 'को', 'है', 'हैं', 'था', 'थी', 'थे',
         'और', 'या', 'भी', 'कि', 'तो', 'ही', 'लिए', 'बारे', 'क्या', 'कौन', 'कैसे',
+        'सुझाव', 'बताएं', 'दिखाएं', 'खोजें', 'चाहिए', 'खरीदना',
         'ਕਾ', 'ਕੀ', 'ਕੇ', 'ਵਿੱਚ', 'ਪਰ', 'ਸੇ', 'ਨੂੰ', 'ਹੈ', 'ਹਨ', 'ਸੀ', 'ਅਤੇ', 'ਜਾਂ', 'ਵੀ', 'ਲਈ',
         'ਕਹਾਂ', 'ਕਬ', 'ਕਿਉਂ', 'ਕਿਰਪਾ', 'ਦੱਸੋ', 'ਦਿਖਾਓ', 'ਚਾਹੀਦਾ', 'ਦੇ'
     ]);
@@ -1006,24 +1009,37 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
     if (productSearchAllowed) {
         // Stage 8: Direct product search (ILIKE on full query)
         let directProducts = await productService.simpleChatbotSearch(sanitizedQuery);
+        let matchedSearchTerm = sanitizedQuery;
         
         // If Hindi/Punjabi, try searching with shadow query too
         if (directProducts.length === 0 && shadowQuery && shadowQuery !== sanitizedQuery) {
             directProducts = await productService.simpleChatbotSearch(shadowQuery);
+            if (directProducts.length > 0) matchedSearchTerm = shadowQuery;
+        }
+
+        // Try clean keyword phrase if query contained conversational filler (e.g. "suggest a cough syrup" -> "cough syrup")
+        if (directProducts.length === 0 && keywords.length > 0) {
+            const cleanKwQuery = keywords.map(normalizeKeyword).join(' ');
+            if (cleanKwQuery && cleanKwQuery !== sanitizedQuery && cleanKwQuery !== shadowQuery) {
+                directProducts = await productService.simpleChatbotSearch(cleanKwQuery);
+                if (directProducts.length > 0) {
+                    matchedSearchTerm = cleanKwQuery;
+                }
+            }
         }
 
         if (directProducts.length > 0) {
             setSession(sessionId, {
                 lastProducts: directProducts,
-                lastKeyword: shadowQuery || sanitizedQuery,
+                lastKeyword: matchedSearchTerm,
                 lastCategory: directProducts[0]?.category || ''
             });
             return {
                 answer: language === 'hi'
-                    ? `मुझे "${localizeText(shadowQuery || sanitizedQuery, 'hi')}" से मेल खाने वाले ${directProducts.length} उत्पाद मिले:`
+                    ? `मुझे "${localizeText(matchedSearchTerm, 'hi')}" से मेल खाने वाले ${directProducts.length} उत्पाद मिले:`
                     : language === 'pa'
-                    ? `ਮੈਨੂੰ "${localizeText(shadowQuery || sanitizedQuery, 'pa')}" ਨਾਲ ਮੇਲ ਖਾਂਦੇ ${directProducts.length} ਉਤਪਾਦ ਮਿਲੇ ਹਨ:`
-                    : `I found ${directProducts.length} product${directProducts.length > 1 ? 's' : ''} matching "${sanitizedQuery}":`,
+                    ? `ਮੈਨੂੰ "${localizeText(matchedSearchTerm, 'pa')}" ਨਾਲ ਮੇਲ ਖਾਂਦੇ ${directProducts.length} ਉਤਪਾਦ ਮਿਲੇ ਹਨ:`
+                    : `I found ${directProducts.length} product${directProducts.length > 1 ? 's' : ''} matching "${matchedSearchTerm}":`,
                 intent: 'product_search',
                 confidence: 1.0,
                 products: directProducts

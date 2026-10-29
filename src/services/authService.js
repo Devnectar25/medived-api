@@ -273,4 +273,85 @@ exports.loginAdmin = async (username, password, ipAddress) => {
     }
 };
 
+exports.requestPasswordReset = async (email) => {
+    if (!email) {
+        throw new Error("Email is required");
+    }
+    const cleanEmail = email.trim().toLowerCase();
+
+    // Check if user exists in public.users
+    const result = await pool.query(
+        "SELECT username, emailid FROM public.users WHERE LOWER(emailid) = $1 OR LOWER(username) = $1",
+        [cleanEmail]
+    );
+
+    if (result.rows.length === 0) {
+        throw new Error("No account found with this email address");
+    }
+
+    const user = result.rows[0];
+    const otp = generateOTP();
+    console.log(`[Password Reset OTP] for ${user.emailid}: ${otp}`);
+
+    otpStore.set(user.emailid.toLowerCase(), {
+        otp,
+        expires: Date.now() + 10 * 60 * 1000, // 10 minutes
+        type: 'password_reset',
+        username: user.username,
+        email: user.emailid
+    });
+
+    return {
+        success: true,
+        email: user.emailid,
+        otp
+    };
+};
+
+exports.resetPasswordWithOtp = async (email, otp, newPassword) => {
+    if (!email || !otp || !newPassword) {
+        throw new Error("Email, verification code, and new password are required");
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanOtp = otp.trim();
+
+    const record = otpStore.get(cleanEmail);
+    if (!record || record.type !== 'password_reset') {
+        throw new Error("Password reset request not found or expired. Please request a new code.");
+    }
+
+    if (Date.now() > record.expires) {
+        otpStore.delete(cleanEmail);
+        throw new Error("Verification code has expired. Please request a new one.");
+    }
+
+    if (record.otp !== cleanOtp) {
+        throw new Error("Invalid verification code");
+    }
+
+    if (newPassword.length < 8) {
+        throw new Error("Password must be at least 8 characters");
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    // Update in database
+    await pool.query(
+        "UPDATE public.users SET password = $1 WHERE username = $2 OR LOWER(emailid) = $3",
+        [hashedPassword, record.username, cleanEmail]
+    );
+
+    // Invalidate OTP
+    otpStore.delete(cleanEmail);
+
+    return {
+        success: true,
+        message: "Password reset successfully. You can now login with your new password."
+    };
+};
+
+
 

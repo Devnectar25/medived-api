@@ -42,7 +42,7 @@ exports.createCategory = async (req, res) => {
         inputData.active = inputData.active === undefined ? true : inputData.active;
 
         // Ensure name is provided
-        if (!inputData.name) {
+        if (!inputData.name || !inputData.name.trim()) {
             return res.status(400).json({ success: false, message: "Category name is required" });
         }
 
@@ -50,7 +50,8 @@ exports.createCategory = async (req, res) => {
         res.status(201).json({ success: true, data, message: "Category created successfully" });
     } catch (error) {
         console.error("Error in createCategory:", error);
-        res.status(500).json({ success: false, error: error.message });
+        const status = error.statusCode || 500;
+        res.status(status).json({ success: false, message: error.message, error: error.message });
     }
 };
 
@@ -68,7 +69,8 @@ exports.updateCategory = async (req, res) => {
         res.json({ success: true, data, message: "Category updated successfully" });
     } catch (error) {
         console.error("Error in updateCategory:", error);
-        res.status(500).json({ success: false, error: error.message });
+        const status = error.statusCode || 500;
+        res.status(status).json({ success: false, message: error.message, error: error.message });
     }
 };
 

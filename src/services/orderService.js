@@ -1874,3 +1874,24 @@ exports.setOrderApprovalMode = async (mode) => {
     );
     return validMode;
 };
+
+exports.updateOrderAddress = async (orderId, addressData) => {
+    const { address, city, state, pincode } = addressData;
+    const orderRes = await pool.query('SELECT address_id FROM orders WHERE id = $1', [orderId]);
+    if (orderRes.rows.length === 0) throw new Error('Order not found');
+    const addressId = orderRes.rows[0].address_id;
+    if (addressId) {
+        await pool.query(
+            `UPDATE user_addresses 
+             SET full_address = COALESCE($1, full_address),
+                 city = COALESCE($2, city),
+                 state = COALESCE($3, state),
+                 postal_code = COALESCE($4, postal_code),
+                 updated_at = NOW()
+             WHERE id = $5`,
+            [address || null, city || null, state || null, pincode || null, addressId]
+        );
+    }
+    return await exports.getOrderById(orderId);
+};
+

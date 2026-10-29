@@ -42,11 +42,19 @@ exports.getActiveSubcategories = async (req, res) => {
 
 exports.createSubcategory = async (req, res) => {
     try {
+        const { category_id, name } = req.body;
+        if (!category_id) {
+            return res.status(400).json({ success: false, message: "Parent category is required" });
+        }
+        if (!name || !name.trim()) {
+            return res.status(400).json({ success: false, message: "Subcategory name is required" });
+        }
         const data = await subcategoryService.createSubcategory(req.body);
         res.status(201).json({ success: true, data, message: "Subcategory created successfully" });
     } catch (error) {
         console.error("Error in createSubcategory:", error);
-        res.status(500).json({ success: false, error: error.message });
+        const status = error.statusCode || 500;
+        res.status(status).json({ success: false, message: error.message, error: error.message });
     }
 };
 
@@ -58,7 +66,8 @@ exports.updateSubcategory = async (req, res) => {
         res.json({ success: true, data, message: "Subcategory updated successfully" });
     } catch (error) {
         console.error("Error in updateSubcategory:", error);
-        res.status(500).json({ success: false, error: error.message });
+        const status = error.statusCode || 500;
+        res.status(status).json({ success: false, message: error.message, error: error.message });
     }
 };
 

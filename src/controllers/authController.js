@@ -61,6 +61,28 @@ exports.resendOtp = async (req, res) => {
     }
 };
 
+exports.forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        const result = await authService.requestPasswordReset(email);
+        res.json(result);
+    } catch (error) {
+        console.error('[forgotPassword] Error:', error.message);
+        res.status(400).json({ success: false, message: error.message });
+    }
+};
+
+exports.resetPassword = async (req, res) => {
+    try {
+        const { email, otp, newPassword } = req.body;
+        const result = await authService.resetPasswordWithOtp(email, otp, newPassword);
+        res.json(result);
+    } catch (error) {
+        console.error('[resetPassword] Error:', error.message);
+        res.status(400).json({ success: false, message: error.message });
+    }
+};
+
 exports.adminLogin = async (req, res) => {
     try {
         const { username, password } = req.body;
