@@ -219,3 +219,52 @@ exports.smartSearch = async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 };
+
+
+exports.importExcel = async (req, res) => {
+    try {
+        if (!req.file || !req.file.buffer) {
+            return res.status(400).json({ success: false, message: "No Excel file uploaded" });
+        }
+        const result = await productService.importProductsFromExcelBuffer(req.file.buffer);
+        res.json({ success: true, ...result });
+    } catch (error) {
+        console.error("Error in importExcel:", error);
+        res.status(500).json({ success: false, message: error.message || "Failed to process Excel file" });
+    }
+};
+
+exports.bulkCreateProducts = async (req, res) => {
+    try {
+        const { products, sheetName, fileName } = req.body;
+        if (!Array.isArray(products) || products.length === 0) {
+            return res.status(400).json({ success: false, message: "Products array is required" });
+        }
+        const result = await productService.importProductsFromRows(products, { sheetName, fileName });
+        res.json({ success: true, ...result });
+    } catch (error) {
+        console.error("Error in bulkCreateProducts:", error);
+        res.status(500).json({ success: false, message: error.message || "Failed to import products" });
+    }
+};
+
+exports.getImportHistory = async (req, res) => {
+    try {
+        const data = await productService.getImportHistory();
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error("Error in getImportHistory:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+exports.deleteImportHistory = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await productService.deleteImportHistory(id);
+        res.json({ success: true, ...result });
+    } catch (error) {
+        console.error("Error in deleteImportHistory:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
