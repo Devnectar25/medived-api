@@ -1,7 +1,7 @@
 const pool = require('../config/db');
 const couponService = require('./couponService');
 const paymentService = require('./paymentService');
-const shiprocketService = require('./shiprocketService');
+const dtdcService = require('./dtdcService');
 const whatsappService = require('./whatsappService');
 
 exports.createOrder = async (orderData) => {
@@ -981,6 +981,18 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         refund_ifsc_code = COALESCE($4::text, refund_ifsc_code),
                         refund_holder_name = COALESCE($5::text, refund_holder_name),
                         refund_status = $6::text,
+                        payment_status = CASE 
+                            WHEN $7::text = 'Delivered' THEN 'Paid'
+                            ELSE payment_status
+                        END,
+                        payment_type = CASE 
+                            WHEN $7::text = 'Delivered' THEN 'Paid'
+                            ELSE payment_type
+                        END,
+                        delivered_at = CASE 
+                            WHEN $7::text = 'Delivered' AND delivered_at IS NULL THEN NOW() 
+                            ELSE delivered_at 
+                        END,
                         updated_at = NOW()
                      WHERE id = $1::uuid`,
                     [
@@ -1041,7 +1053,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             ];
         } else if (status === 'Delivered') {
             console.log(`[OrderService] Marking order ${orderId} as Delivered and Payment as ${paymentStatus || 'Paid'}`);
-            updateQuery = `UPDATE orders SET status = $2, original_status = $2, payment_status = $3, delivered_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
+            updateQuery = `UPDATE orders SET status = $2, original_status = $2, payment_status = $3, payment_type = 'Paid', delivered_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
             updateParams = [orderId, status, paymentStatus || 'Paid'];
         } else if (status.includes('Return Approved') || status.includes('Return Rejected') ||
             status.includes('Replace Approved') || status.includes('Replace Rejected') ||
@@ -1189,6 +1201,14 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                                             WHEN $3::text IS NOT NULL THEN $3::text
                                             ELSE payment_status 
                                           END,
+                           payment_type = CASE 
+                                          WHEN $2::text = 'Delivered' THEN 'Paid'
+                                          ELSE payment_type 
+                                        END,
+                           delivered_at = CASE 
+                                          WHEN $2::text = 'Delivered' AND delivered_at IS NULL THEN NOW() 
+                                          ELSE delivered_at 
+                                        END,
                            is_returned_order = CASE WHEN $2::text IN ('Returned', 'Return Approved', 'Received at Homved', 'Return Request Processing', 'Return Requested', 'Partially Returning', 'Return Processing', 'Return Collected') THEN TRUE ELSE is_returned_order END,
                            refund_status = CASE WHEN $2::text IN ('Returned', 'Return Approved', 'Return Request Processing', 'Return Requested', 'Partially Returning', 'Return Processing', 'Return Collected') THEN COALESCE(refund_status, 'Pending') ELSE refund_status END,
                            is_product_received = CASE WHEN $2::text IN ('Received at Homved', 'Returned') THEN TRUE ELSE is_product_received END,
@@ -1314,7 +1334,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 
                 // 1. Logistics: Only for Return/Replace Approval (Reverse Pickup)
                 if ((status === 'Return Approved' || status === 'Replace Approved') && affectedItems.length > 0) {
-                    await shiprocketService.createReversePickup(order, affectedItems);
+                    await dtdcService.createReverseShipment(orderId);
                 }
 
                 // 2. Notifications: For all major lifecycle changes
@@ -1853,4 +1873,126 @@ exports.setOrderApprovalMode = async (mode) => {
         [validMode]
     );
     return validMode;
+};
+
+exports.updateOrderAddress = async (orderId, addressData) => {
+    const { address, city, state, pincode } = addressData;
+    const orderRes = await pool.query('SELECT address_id FROM orders WHERE id = $1', [orderId]);
+    if (orderRes.rows.length === 0) throw new Error('Order not found');
+    const addressId = orderRes.rows[0].address_id;
+    if (addressId) {
+        await pool.query(
+            `UPDATE user_addresses 
+             SET full_address = COALESCE($1, full_address),
+                 city = COALESCE($2, city),
+                 state = COALESCE($3, state),
+                 postal_code = COALESCE($4, postal_code),
+                 updated_at = NOW()
+             WHERE id = $5`,
+            [address || null, city || null, state || null, pincode || null, addressId]
+        );
+    }
+    return await exports.getOrderById(orderId);
+};
+
+
+
+
+/**
+ * Confirm Return Package Received at Store and Generate Replacement Order (-REP)
+ * Fulfills Requirement 3 & 4: Creates ORD...-REP linked to original order
+ */
+exports.confirmReceivedAndCreateReplacement = async (orderId) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // 1. Fetch parent order
+        const parentRes = await client.query('SELECT * FROM orders WHERE id = $1', [orderId]);
+        if (parentRes.rows.length === 0) throw new Error('Original order not found');
+        const parentOrder = parentRes.rows[0];
+
+        // 2. Prevent duplicate replacement orders
+        const existingRep = await client.query('SELECT * FROM orders WHERE parent_order_id = $1', [orderId]);
+        if (existingRep.rows.length > 0) {
+            await client.query('COMMIT');
+            return {
+                parentOrder: await exports.getOrderById(orderId),
+                replacementOrder: await exports.getOrderById(existingRep.rows[0].id)
+            };
+        }
+
+        // 3. Mark original parent order as 'Received at Homved'
+        await client.query(`
+            UPDATE orders 
+            SET status = 'Received at Homved',
+                is_product_received = true,
+                logistics_status = 'Received at Store',
+                updated_at = NOW()
+            WHERE id = $1
+        `, [orderId]);
+
+        // 4. Determine items to replace
+        const itemsRes = await client.query(`
+            SELECT * FROM order_items 
+            WHERE order_id = $1 AND (status IN ('Replace Approved', 'Replacement Request Processing', 'Received at Homved') OR status LIKE '%Replace%')
+        `, [orderId]);
+        const itemsToReplace = itemsRes.rows.length > 0 ? itemsRes.rows : (await client.query('SELECT * FROM order_items WHERE order_id = $1', [orderId])).rows;
+
+        // 5. Generate new replacement order with -REP suffix
+        const repOrderNumber = `${parentOrder.order_number}-REP`;
+
+        const insertRepOrder = await client.query(`
+            INSERT INTO orders (
+                user_id, order_number, address_id, payment_method, payment_status, payment_type,
+                subtotal, shipping, total, original_total, status, logistics_provider,
+                is_replacement, parent_order_id, original_order_id, created_at, updated_at
+            ) VALUES (
+                $1, $2, $3, $4, 'Paid', 'Replacement (₹0)',
+                0, 0, 0, $5, 'Confirmed', 'DTDC',
+                true, $6, $6, NOW(), NOW()
+            ) RETURNING *
+        `, [
+            parentOrder.user_id,
+            repOrderNumber,
+            parentOrder.address_id,
+            parentOrder.payment_method || 'cod',
+            parentOrder.total || 0,
+            orderId
+        ]);
+
+        const replacementOrderRecord = insertRepOrder.rows[0];
+
+        // 6. Insert items into new replacement order
+        for (const item of itemsToReplace) {
+            await client.query(`
+                INSERT INTO order_items (
+                    order_id, product_id, name, price, quantity, image, status, created_at
+                ) VALUES (
+                    $1, $2, $3, 0, $4, $5, 'Confirmed', NOW()
+                )
+            `, [
+                replacementOrderRecord.id,
+                item.product_id,
+                item.name,
+                item.quantity,
+                item.image
+            ]);
+        }
+
+        await client.query('COMMIT');
+
+        console.log(`[OrderService] Generated Replacement Order ${repOrderNumber} for Parent ${parentOrder.order_number}`);
+
+        return {
+            parentOrder: await exports.getOrderById(orderId),
+            replacementOrder: await exports.getOrderById(replacementOrderRecord.id)
+        };
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('[OrderService] confirmReceivedAndCreateReplacement Error:', error);
+        throw error;
+    } finally {
+        client.release();
+    }
 };

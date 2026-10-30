@@ -75,19 +75,75 @@ exports.getSubcategoriesBycategory_id = async (category_id) => {
 };
 
 exports.createSubcategory = async (data) => {
-    const { category_id, name, description, active } = data;
+    let { category_id, name, description, active } = data;
+    name = (name || '').trim();
+    const catId = parseInt(category_id, 10);
+
+    if (!catId) {
+        const error = new Error("Parent category is required.");
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (!name) {
+        const error = new Error("Subcategory name is required.");
+        error.statusCode = 400;
+        throw error;
+    }
+
+    // Check for duplicate subcategory under the same parent category (case-insensitive & trimmed)
+    const existing = await pool.query(
+        "SELECT srno, name FROM subcategory WHERE category_id = $1 AND LOWER(TRIM(name)) = LOWER($2)",
+        [catId, name]
+    );
+
+    if (existing.rows.length > 0) {
+        const error = new Error(`Subcategory "${name}" already exists under this category.`);
+        error.statusCode = 400;
+        throw error;
+    }
+
     const result = await pool.query(
         "INSERT INTO subcategory (category_id, name, description, active, createdate) VALUES ($1, $2, $3, $4, NOW()) RETURNING *",
-        [category_id, name, description, active !== false]
+        [catId, name, description, active !== false]
     );
     return mapSubcategory(result.rows[0]);
 };
 
 exports.updateSubcategory = async (id, data) => {
-    const { category_id, name, description, active } = data;
+    let { category_id, name, description, active } = data;
+    const subcategoryId = parseInt(id, 10);
+
+    // Fetch existing subcategory to know current category_id and name if not provided
+    const currentSub = await pool.query("SELECT srno, category_id, name FROM subcategory WHERE srno = $1", [subcategoryId]);
+    if (currentSub.rows.length === 0) {
+        return null;
+    }
+
+    const targetCategoryId = category_id !== undefined ? parseInt(category_id, 10) : currentSub.rows[0].category_id;
+    const targetName = name !== undefined ? name.trim() : (currentSub.rows[0].name || '').trim();
+
+    if (name !== undefined && !targetName) {
+        const error = new Error("Subcategory name cannot be empty.");
+        error.statusCode = 400;
+        throw error;
+    }
+
+    // Check for duplicate under target category excluding the current subcategory
+    const existing = await pool.query(
+        "SELECT srno, name FROM subcategory WHERE category_id = $1 AND LOWER(TRIM(name)) = LOWER($2) AND srno != $3",
+        [targetCategoryId, targetName, subcategoryId]
+    );
+
+    if (existing.rows.length > 0) {
+        const error = new Error(`Another subcategory with the name "${targetName}" already exists under this category.`);
+        error.statusCode = 400;
+        throw error;
+    }
+
     const result = await pool.query(
         "UPDATE subcategory SET category_id = COALESCE($1, category_id), name = COALESCE($2, name), description = COALESCE($3, description), active = COALESCE($4, active) WHERE srno = $5 RETURNING *",
-        [category_id, name, description, active, id]
+        [category_id !== undefined ? targetCategoryId : null, name !== undefined ? targetName : null, description, active, subcategoryId]
     );
     return result.rows[0] ? mapSubcategory(result.rows[0]) : null;
 };

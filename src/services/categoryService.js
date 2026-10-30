@@ -39,7 +39,21 @@ exports.getCategoryById = async (id) => {
 };
 
 exports.createCategory = async (data) => {
-    const { name, description, active, category_image } = data;
+    let { name, description, active, category_image } = data;
+    name = (name || '').trim();
+
+    // Check for duplicate category name (case-insensitive)
+    const existing = await pool.query(
+        "SELECT category_id, name FROM category WHERE LOWER(TRIM(name)) = LOWER($1)",
+        [name]
+    );
+
+    if (existing.rows.length > 0) {
+        const error = new Error(`Category "${name}" already exists.`);
+        error.statusCode = 400;
+        throw error;
+    }
+
     const result = await pool.query(
         "INSERT INTO category (name, description, active, category_image, createdate) VALUES ($1, $2, $3, $4, NOW()) RETURNING *",
         [name, description, active, category_image]
@@ -48,7 +62,22 @@ exports.createCategory = async (data) => {
 };
 
 exports.updateCategory = async (id, data) => {
-    const { name, description, active, category_image } = data;
+    let { name, description, active, category_image } = data;
+    if (name !== undefined) {
+        name = name.trim();
+        // Check for duplicate category name with other categories
+        const existing = await pool.query(
+            "SELECT category_id, name FROM category WHERE LOWER(TRIM(name)) = LOWER($1) AND category_id != $2",
+            [name, id]
+        );
+
+        if (existing.rows.length > 0) {
+            const error = new Error(`Another category with the name "${name}" already exists.`);
+            error.statusCode = 400;
+            throw error;
+        }
+    }
+
     const result = await pool.query(
         "UPDATE category SET name = COALESCE($1, name), description = COALESCE($2, description), active = COALESCE($3, active), category_image = COALESCE($4, category_image) WHERE category_id = $5 RETURNING *",
         [name, description, active, category_image, id]

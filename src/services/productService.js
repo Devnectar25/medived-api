@@ -155,7 +155,10 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
         LEFT JOIN category c ON p.category_id = c.category_id
         LEFT JOIN brand b ON p.brand = b.brand_id
         LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
-        WHERE p.product_id != $1::integer AND p.active = true
+        WHERE p.product_id != $1::integer 
+          AND p.active = true 
+          AND p.instock = true 
+          AND (COALESCE(p.stock_quantity, p.quantity, 1) > 0)
     `;
     const params = [productId];
 
@@ -171,7 +174,7 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
     const result = await pool.query(query, params);
     let related = result.rows || [];
 
-    // If we have fewer products than the limit, fill the rest with other active products
+    // If we have fewer products than the limit, fill the rest with other active in-stock products
     if (related.length < limit) {
         const extraLimit = limit - related.length;
         const alreadyFetchedIds = related.map(p => parseInt(p.product_id)).concat(parseInt(productId));
@@ -182,7 +185,10 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
             LEFT JOIN category c ON p.category_id = c.category_id
             LEFT JOIN brand b ON p.brand = b.brand_id
             LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
-            WHERE p.active = true AND p.product_id NOT IN (${alreadyFetchedIds.map((_, i) => `$${i + 1}`).join(',')})
+            WHERE p.active = true 
+              AND p.instock = true 
+              AND (COALESCE(p.stock_quantity, p.quantity, 1) > 0)
+              AND p.product_id NOT IN (${alreadyFetchedIds.map((_, i) => `$${i + 1}`).join(',')})
             ORDER BY p.promoted DESC, p.rating DESC NULLS LAST
             LIMIT $${alreadyFetchedIds.length + 1}
         `;
@@ -332,7 +338,21 @@ exports.toggleProductStatus = async (id) => {
 exports.simpleChatbotSearch = async (query) => {
     if (!query) return [];
 
-    const searchPattern = `%${query.trim()}%`;
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+
+    const searchPattern = `%${trimmed}%`;
+    const words = trimmed.split(/\s+/).filter(w => w.length > 1);
+
+    // Build multi-word condition if multiple words exist
+    let multiWordCondition = '';
+    let multiWordParams = [];
+    if (words.length > 1) {
+        const wordConditions = words.map((_, i) => `(p.productname ILIKE $${i + 3} OR p.description ILIKE $${i + 3} OR c.name ILIKE $${i + 3})`);
+        multiWordCondition = `OR (${wordConditions.join(' AND ')})`;
+        multiWordParams = words.map(w => `%${w}%`);
+    }
+
     const sql = `
         SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
         FROM products p
@@ -344,12 +364,35 @@ exports.simpleChatbotSearch = async (query) => {
             p.description ILIKE $1 OR
             c.name ILIKE $1 OR
             b.name ILIKE $1
+            ${multiWordCondition}
         )
-        ORDER BY p.productname ASC
+        ORDER BY 
+            CASE 
+                -- Exact full product name match
+                WHEN LOWER(p.productname) = LOWER($2) THEN 1
+                -- Product name starts with query
+                WHEN LOWER(p.productname) ILIKE LOWER($2) || '%' THEN 2
+                -- Full query appears in product name
+                WHEN p.productname ILIKE $1 THEN 3
+                ${words.length > 1 ? `WHEN (${words.map((_, i) => `p.productname ILIKE $${i + 3}`).join(' AND ')}) THEN 4` : ''}
+                -- Category name matches
+                WHEN c.name ILIKE $1 THEN 5
+                -- Brand name matches
+                WHEN b.name ILIKE $1 THEN 6
+                ${words.length > 1 ? `WHEN (${words.map((_, i) => `(p.productname ILIKE $${i + 3} OR p.description ILIKE $${i + 3})`).join(' AND ')}) THEN 7` : ''}
+                -- Short description matches
+                WHEN p.shortdescription ILIKE $1 THEN 8
+                -- General description matches
+                WHEN p.description ILIKE $1 THEN 9
+                ELSE 10
+            END ASC,
+            p.rating DESC NULLS LAST,
+            p.productname ASC
         LIMIT 20
     `;
 
-    const result = await pool.query(sql, [searchPattern]);
+    const allParams = [searchPattern, trimmed, ...multiWordParams];
+    const result = await pool.query(sql, allParams);
     return result.rows.map(mapProduct);
 };
 
@@ -419,6 +462,7 @@ exports.chatbotGetProducts = async (limit = 10) => {
  * Used when user says "show me ayurvedic products" / "list herbal items".
  */
 exports.chatbotSearchByCategory = async (categoryName, limit = 10) => {
+    const searchPattern = `%${categoryName.trim()}%`;
     const sql = `
         SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
         FROM products p
@@ -434,9 +478,20 @@ exports.chatbotSearchByCategory = async (categoryName, limit = 10) => {
               OR b.name ILIKE $1
               OR sc.name ILIKE $1
           )
-        ORDER BY p.promoted DESC, p.rating DESC NULLS LAST
+        ORDER BY 
+            CASE
+                WHEN c.name ILIKE $1 THEN 1
+                WHEN sc.name ILIKE $1 THEN 2
+                WHEN p.productname ILIKE $1 THEN 3
+                WHEN b.name ILIKE $1 THEN 4
+                WHEN p.shortdescription ILIKE $1 THEN 5
+                ELSE 6
+            END ASC,
+            p.promoted DESC, 
+            p.rating DESC NULLS LAST,
+            p.productname ASC
         LIMIT $2
     `;
-    const result = await pool.query(sql, [`%${categoryName}%`, limit]);
+    const result = await pool.query(sql, [searchPattern, limit]);
     return result.rows.map(mapProduct);
 };

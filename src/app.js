@@ -56,14 +56,13 @@ app.use((req, res, next) => {
     }
 
     let data = '';
-    const MAX_SIZE = 1 * 1024 * 1024; // 1MB limit
-    // ... (omitting lines for brevity in match, but I will replace the whole block correctly)
-
+    const MAX_SIZE = 15 * 1024 * 1024; // 15MB limit to support base64 return/replace image proofs
 
     req.on('data', chunk => {
         data += chunk;
         if (data.length > MAX_SIZE) {
-            req.destroy(); // Terminate request if too large
+            res.status(413).json({ success: false, message: 'Uploaded data too large. Max 15MB allowed.' });
+            req.destroy();
         }
     });
 
