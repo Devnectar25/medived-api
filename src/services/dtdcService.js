@@ -76,7 +76,7 @@ async function refreshTrackingToken() {
 }
 
 /**
- * 1. Book Consignment / Generate AWB with DTDC (Softdata)
+ * 1. Book Consignment / Generate AWB with DTDC (Softdata) - Forward
  */
 exports.createShipment = async (orderId, packageOptions = {}) => {
     // Fetch order details with shipping address
@@ -396,5 +396,174 @@ exports.trackShipment = async (trackingNumber) => {
         isDelivered: isDelivered,
         timeline: formattedTimeline.reverse(), // most recent first
         raw: data
+    };
+};
+
+/**
+ * 4. Book Reverse Consignment / Reverse Pickup with DTDC (Softdata)
+ * Customer Doorstep -> Homved Medicine Center
+ */
+exports.createReverseShipment = async (orderId, packageOptions = {}) => {
+    // Fetch order details with pickup address
+    const orderQuery = `
+        SELECT o.*, 
+               u.fullname AS customer_name, 
+               u.emailid AS customer_email, 
+               u.contactno AS customer_phone, 
+               a.full_address, 
+               a.city, 
+               a.state, 
+               a.postal_code, 
+               a.address_label,
+               (
+                   SELECT json_agg(items_data)
+                   FROM (
+                       SELECT * FROM order_items WHERE order_id = o.id
+                   ) items_data
+               ) as items
+        FROM orders o
+        LEFT JOIN user_addresses a ON o.address_id = a.id
+        LEFT JOIN users u ON o.user_id = u.username
+        WHERE o.id = $1
+    `;
+    const orderRes = await pool.query(orderQuery, [orderId]);
+    if (orderRes.rows.length === 0) {
+        throw new Error('Order not found');
+    }
+
+    const order = orderRes.rows[0];
+
+    // Customer is origin for reverse pickup
+    const pickupName = (order.customer_name || 'Customer').trim();
+    const pickupPhone = (order.customer_phone || '9999999999').replace(/[^0-9]/g, '').slice(-10) || '9999999999';
+    const pickupAddress = (order.full_address || 'Customer Address').trim();
+    const pickupCity = (order.city || 'Mumbai').trim();
+    const pickupState = (order.state || 'Maharashtra').trim();
+    const pickupPincode = (order.postal_code || '').trim();
+
+    if (!pickupPincode || pickupPincode.length !== 6) {
+        throw new Error('Customer pickup pincode is missing or invalid for reverse shipment.');
+    }
+
+    const length = (packageOptions.length || 10).toString();
+    const width = (packageOptions.width || 10).toString();
+    const height = (packageOptions.height || 10).toString();
+    const weight = (packageOptions.weight || 0.5).toString();
+    const declaredValue = Math.round(parseFloat(order.total || 500)).toString();
+
+    // Prepare reverse softdata payload
+    const payload = {
+        consignments: [
+            {
+                customer_code: DTDC_CUSTOMER_CODE,
+                service_type_id: "B2C PRIORITY",
+                load_type: "NON-DOCUMENT",
+                consignment_type: "Reverse",
+                description: "Homved Healthcare Return/Replacement",
+                dimension_unit: "cm",
+                length: length,
+                width: width,
+                height: height,
+                weight_unit: "kg",
+                weight: weight,
+                declared_value: declaredValue,
+                num_pieces: "1",
+                origin_details: {
+                    name: pickupName,
+                    phone: pickupPhone,
+                    alternate_phone: "0000000000",
+                    address_line_1: pickupAddress,
+                    address_line_2: "",
+                    pincode: pickupPincode,
+                    city: pickupCity,
+                    latitude: "",
+                    longitude: "",
+                    state: pickupState
+                },
+                destination_details: {
+                    name: HOMVED_ORIGIN.name,
+                    phone: HOMVED_ORIGIN.phone,
+                    alternate_phone: HOMVED_ORIGIN.alternate_phone,
+                    address_line_1: HOMVED_ORIGIN.address_line_1,
+                    address_line_2: HOMVED_ORIGIN.address_line_2,
+                    pincode: HOMVED_ORIGIN.pincode,
+                    city: HOMVED_ORIGIN.city,
+                    latitude: HOMVED_ORIGIN.latitude,
+                    longitude: HOMVED_ORIGIN.longitude,
+                    state: HOMVED_ORIGIN.state
+                },
+                return_details: {
+                    name: HOMVED_ORIGIN.name,
+                    phone: HOMVED_ORIGIN.phone,
+                    address_line_1: HOMVED_ORIGIN.address_line_1,
+                    address_line_2: HOMVED_ORIGIN.address_line_2,
+                    pincode: HOMVED_ORIGIN.pincode,
+                    city_name: HOMVED_ORIGIN.city,
+                    latitude: HOMVED_ORIGIN.latitude,
+                    longitude: HOMVED_ORIGIN.longitude,
+                    state_name: HOMVED_ORIGIN.state,
+                    alternate_phone: HOMVED_ORIGIN.alternate_phone
+                },
+                customer_reference_number: `${order.order_number}-REV`,
+                cod_collection_mode: "",
+                cod_amount: "",
+                commodity_id: "Medicine",
+                eway_bill: "",
+                is_risk_surcharge_applicable: "false",
+                invoice_number: `RET-${order.order_number}`,
+                invoice_date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+                reference_number: ""
+            }
+        ]
+    };
+
+    console.log(`[DTDC] Creating REVERSE shipment for Order ${order.order_number}...`);
+
+    const response = await fetch(`${DTDC_BASE_URL}/api/customer/integration/consignment/softdata`, {
+        method: 'POST',
+        headers: {
+            'api-key': DTDC_API_KEY,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    });
+
+    const responseData = await response.json();
+    console.log('[DTDC] Reverse Softdata Response:', JSON.stringify(responseData, null, 2));
+
+    if (responseData.status !== 'OK' || !responseData.data || !responseData.data[0]) {
+        const errorMsg = responseData.error?.message || responseData.message || 'DTDC failed to book reverse pickup';
+        throw new Error(`DTDC Reverse Error: ${errorMsg}`);
+    }
+
+    const consignment = responseData.data[0];
+    if (!consignment.success || !consignment.reference_number) {
+        const rawMsg = consignment.message || 'No tracking reference returned';
+        if (rawMsg.includes('Special destination not enabled')) {
+            throw new Error(`Special Destination Not Enabled: Customer pincode ${pickupPincode} is flagged by DTDC as remote/special destination.`);
+        }
+        throw new Error(`DTDC Reverse Booking Failed: ${rawMsg}`);
+    }
+
+    const reverseTrackingNumber = consignment.reference_number; // e.g. 7X...
+
+    // Update order in database with reverse tracking details
+    const updateRes = await pool.query(
+        `UPDATE orders 
+         SET reverse_tracking_id = $1, 
+             logistics_provider = 'DTDC', 
+             logistics_status = 'Reverse Pickup Scheduled',
+             updated_at = NOW()
+         WHERE id = $2 
+         RETURNING *`,
+        [reverseTrackingNumber, orderId]
+    );
+
+    return {
+        success: true,
+        reverseTrackingNumber: reverseTrackingNumber,
+        customerReferenceNumber: consignment.customer_reference_number,
+        order: updateRes.rows[0],
+        dtdcResponse: consignment
     };
 };

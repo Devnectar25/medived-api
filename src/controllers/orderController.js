@@ -321,3 +321,18 @@ exports.updateOrderAddress = async (req, res) => {
     }
 };
 
+
+exports.confirmReceivedAndCreateReplacement = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await orderService.confirmReceivedAndCreateReplacement(id);
+        res.status(200).json({
+            success: true,
+            message: 'Original product confirmed received at store. Replacement order created successfully.',
+            data: result
+        });
+    } catch (error) {
+        console.error('[OrderController] confirmReceivedAndCreateReplacement Error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
