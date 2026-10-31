@@ -25,6 +25,24 @@ const getCurrencySymbol = () => {
 };
 
 /**
+ * Invoice is issued only for orders delivered successfully:
+ *  - regular orders with status "Delivered"
+ *  - replacement shipments (-REP orders) with status "Delivered"
+ *  - legacy in-order replacements that reached the customer ("Replaced" / "Replacement Delivered")
+ */
+const INVOICE_ELIGIBLE_STATUSES = ['Delivered', 'Replaced', 'Replacement Delivered'];
+const KEPT_ITEM_STATUSES = ['Delivered', 'Replaced', 'Replacement Delivered'];
+exports.isInvoiceEligible = (order) => {
+    if (!order) return false;
+    if (INVOICE_ELIGIBLE_STATUSES.includes(order.status)) return true;
+    // Multi-item orders: the order status may have moved on (e.g. one item being returned) while
+    // other delivered items stay with the customer. Those kept items still need an invoice.
+    let items = order.items || [];
+    if (typeof items === 'string') { try { items = JSON.parse(items); } catch { items = []; } }
+    return Boolean(order.delivered_at) && items.some(i => KEPT_ITEM_STATUSES.includes(i.status));
+};
+
+/**
  * Generates the HTML content for an invoice based on order ID.
  * @param {string|number} orderId - The database ID of the order.
  * @returns {Promise<string>} - Compiled HTML string.
@@ -56,6 +74,35 @@ exports.generateInvoiceHTML = async (orderId) => {
     dueDate.setDate(createdAt.getDate() + 15);
 
     const taxAmount = (subtotal * (taxRate / 100));
+
+    // ── Replacement (-REP) orders: list the real product value, then deduct it as a free replacement ──
+    const isReplacement = order.is_replacement === true;
+    let replacementData = null;
+    if (isReplacement) {
+        let parentNumber = '';
+        const priceByProduct = new Map();
+        if (order.parent_order_id) {
+            const parentRes = await pool.query(
+                `SELECT o.order_number, oi.product_id, oi.price
+                 FROM orders o LEFT JOIN order_items oi ON oi.order_id = o.id
+                 WHERE o.id = $1`,
+                [order.parent_order_id]
+            );
+            parentNumber = parentRes.rows[0]?.order_number || '';
+            parentRes.rows.forEach(r => {
+                const key = String(r.product_id);
+                const price = parseFloat(r.price) || 0;
+                if (!priceByProduct.has(key) || price > priceByProduct.get(key)) priceByProduct.set(key, price);
+            });
+        }
+        const items = (order.items || []).map(item => {
+            const unit = parseFloat(item.price) || priceByProduct.get(String(item.product_id)) || 0;
+            const qty = parseInt(item.quantity) || 1;
+            return { name: item.name, price: unit.toFixed(2), quantity: qty, total: (unit * qty).toFixed(2), lineTotal: unit * qty };
+        });
+        const value = items.reduce((s, i) => s + i.lineTotal, 0);
+        replacementData = { items, value, parentNumber };
+    }
     
     // 4. Load the logo and convert to base64
     let logoBase64 = '';
@@ -135,6 +182,22 @@ exports.generateInvoiceHTML = async (orderId) => {
             year: 'numeric'
         })
     };
+
+    if (replacementData) {
+        Object.assign(templateData, {
+            paymentMethod: 'FREE REPLACEMENT',
+            items: replacementData.items.map(({ lineTotal, ...rest }) => rest),
+            subtotal: replacementData.value.toFixed(2),
+            shippingFee: '0.00',
+            hasDiscount: true,
+            couponCode: '',
+            discount: 100,
+            discountLabel: `Free Replacement${replacementData.parentNumber ? ` (against #${replacementData.parentNumber})` : ''}`,
+            discountAmount: replacementData.value.toFixed(2),
+            taxAmount: '0.00',
+            grandTotal: '0.00',
+        });
+    }
 
     // 4. Load and compile the Handlebars template
     const templatePath = path.join(__dirname, '../templates/invoiceTemplate.html');

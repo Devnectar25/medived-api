@@ -1,5 +1,6 @@
 const orderService = require('../services/orderService');
 const invoiceService = require('../services/invoiceService');
+const bankAccountService = require('../services/bankAccountService');
 
 exports.createOrder = async (req, res) => {
     try {
@@ -170,9 +171,11 @@ exports.updateOrderStatus = async (req, res) => {
         }
 
         const updatedOrder = await orderService.updateOrderStatus(id, status, cancelReason, bankDetails, paymentStatus, itemIds, cancelledBy, trackingNumber);
+        // Customer-submitted refund bank details (e.g. on cancellation) are saved to their account
+        if (!isAdmin && bankDetails) await bankAccountService.rememberAccount(req.user.id, bankDetails);
         res.status(200).json({ success: true, data: updatedOrder });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
 };
 
@@ -185,6 +188,15 @@ exports.downloadInvoice = async (req, res) => {
         // Security check: only allow own user or admin
         if (order.user_id !== req.user.id && req.user.role !== 'admin') {
             return res.status(403).json({ success: false, message: 'Not authorized' });
+        }
+
+        // Invoices exist only for successfully delivered orders
+        // (regular orders and replacement shipments once they reach the customer)
+        if (!invoiceService.isInvoiceEligible(order)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invoice is available only after the order has been delivered successfully.'
+            });
         }
 
         const pdfBuffer = await invoiceService.generateInvoicePDF(id);
@@ -237,7 +249,28 @@ exports.updateRefundStatus = async (req, res) => {
         const updatedOrder = await orderService.updateRefundStatus(id, refundData);
         res.status(200).json({ success: true, data: updatedOrder });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(error.statusCode || 500).json({ success: false, message: error.message });
+    }
+};
+
+// QA inspection of a returned / replacement parcel received at Homved
+exports.recordQaInspection = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { result, notes } = req.body || {};
+        if (!['pass', 'fail'].includes(result)) {
+            return res.status(400).json({ success: false, message: 'result must be "pass" or "fail"' });
+        }
+        const checkedBy = req.user?.username || req.user?.emailid || req.user?.id || 'admin';
+        const data = await orderService.recordQaInspection(id, { passed: result === 'pass', notes, checkedBy: String(checkedBy) });
+        res.status(200).json({
+            success: true,
+            message: result === 'pass' ? 'Parcel passed QA inspection' : 'Parcel failed QA inspection',
+            data
+        });
+    } catch (error) {
+        console.error('[OrderController] recordQaInspection Error:', error.message);
+        res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
 };
 exports.restockOrder = async (req, res) => {
@@ -255,6 +288,8 @@ exports.requestReturnReplace = async (req, res) => {
         const userId = req.user.id;
         console.log(`[OrderController] requestReturnReplace: Order=${id}, User=${userId}, Type=${req.body?.type}`);
         const result = await orderService.requestReturnReplace(id, userId, req.body);
+        // Remember the refund bank account so the customer never has to re-enter it
+        if (req.body?.bankDetails) await bankAccountService.rememberAccount(userId, req.body.bankDetails);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         console.error('[OrderController] requestReturnReplace Error:', error);
@@ -269,6 +304,7 @@ exports.requestItemCancellation = async (req, res) => {
         const isAdmin = req.user.role === 'admin';
         console.log(`[OrderController] requestItemCancellation: ID=${id}, User=${userId}, isAdmin=${isAdmin}`);
         const result = await orderService.requestItemCancellation(id, userId, req.body, isAdmin);
+        if (!isAdmin && req.body?.bankDetails) await bankAccountService.rememberAccount(userId, req.body.bankDetails);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         console.error('[OrderController] requestItemCancellation error:', error);
