@@ -2,6 +2,23 @@ const express = require('express');
 const router = express.Router();
 
 const productController = require('../controllers/productController');
+const multer = require('multer');
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 25 * 1024 * 1024 }
+});
+
+// POST /api/products/import-excel
+router.post('/import-excel', upload.single('file'), productController.importExcel);
+
+// POST /api/products/bulk
+router.post('/bulk', productController.bulkCreateProducts);
+
+// GET /api/products/import-history
+router.get('/import-history', productController.getImportHistory);
+
+// DELETE /api/products/import-history/:id
+router.delete('/import-history/:id', productController.deleteImportHistory);
 
 // GET /api/products
 router.get('/', productController.getProducts);

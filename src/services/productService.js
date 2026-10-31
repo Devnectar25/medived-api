@@ -22,6 +22,8 @@ const mapProduct = (p) => ({
     ingredients: p.ingredients,
     usage: p.usage,
     directions: p.directions,
+    storageInstructions: p.storage_instructions || p.storageinstructions || '',
+    medicineSize: p.medicine_size || p.medicinesize || '',
     supports: p.supports || [],
     expiryInfo: p.expiryinfo,
     subCategory: p.subcategory_name || '', // Use joined name
@@ -209,15 +211,15 @@ exports.createProduct = async (product) => {
         productname, description, shortdescription, price, originalprice,
         discount, category_id: category_id, brand, image, instock, promoted,
         benefits, ingredients, usage, directions, quantity, supports, images,
-        expiryinfo, subcategory_id, specifications, active
+        expiryinfo, subcategory_id, specifications, active, storage_instructions, storageInstructions, medicine_size, medicineSize
     } = product;
 
     const result = await pool.query(
         `INSERT INTO products 
-        (productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, stock_quantity, supports, product_images, expiryinfo, subcategory_id, specifications, active, createdate, updated_at) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16, $17, $18, $19, $20, $21, $22, NOW(), NOW()) 
+        (productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, stock_quantity, supports, product_images, expiryinfo, subcategory_id, specifications, active, storage_instructions, medicine_size, createdate, updated_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW(), NOW()) 
         RETURNING *`,
-        [productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity || 0, supports || [], images || [], expiryinfo, subcategory_id, specifications, active !== false]
+        [productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity || 0, supports || [], images || [], expiryinfo, subcategory_id, specifications, active !== false, storage_instructions !== undefined ? storage_instructions : (storageInstructions || ''), medicine_size !== undefined ? medicine_size : (medicineSize || '')]
     );
     return mapProduct(result.rows[0]);
 };
@@ -253,7 +255,7 @@ exports.updateProduct = async (id, product) => {
         productname, description, shortdescription, price, originalprice,
         discount, category_id: category_id, brand, image, instock, promoted,
         benefits, ingredients, usage, directions, quantity, supports, images,
-        expiryinfo, subcategory_id, specifications, active
+        expiryinfo, subcategory_id, specifications, active, storage_instructions, storageInstructions, medicine_size, medicineSize
     } = product;
 
     // 1. Get current product to check for removed images
@@ -284,10 +286,12 @@ exports.updateProduct = async (id, product) => {
             product_images = COALESCE($19, product_images),
             expiryinfo = $20, subcategory_id = $21, specifications = $22,
             active = COALESCE($23, active),
+            storage_instructions = COALESCE($24, storage_instructions),
+            medicine_size = COALESCE($25, medicine_size),
             updated_at = NOW()
         WHERE product_id = $1::integer 
         RETURNING *`,
-        [id, productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, supports, images, expiryinfo, subcategory_id, specifications, active]
+        [id, productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, supports, images, expiryinfo, subcategory_id, specifications, active, storage_instructions !== undefined ? storage_instructions : (storageInstructions !== undefined ? storageInstructions : null), medicine_size !== undefined ? medicine_size : (medicineSize !== undefined ? medicineSize : null)]
     );
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
 };
@@ -494,4 +498,275 @@ exports.chatbotSearchByCategory = async (categoryName, limit = 10) => {
     `;
     const result = await pool.query(sql, [searchPattern, limit]);
     return result.rows.map(mapProduct);
+};
+
+
+const XLSX = require('xlsx');
+
+exports.importProductsFromExcelBuffer = async (buffer) => {
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) {
+        throw new Error('Excel file has no sheets');
+    }
+    const sheet = workbook.Sheets[firstSheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet);
+    return exports.importProductsFromRows(rows);
+};
+
+exports.importProductsFromRows = async (rows, options = {}) => {
+    if (!Array.isArray(rows) || rows.length === 0) {
+        return { total: 0, imported: 0, updated: 0, errors: ['No data found in rows'] };
+    }
+
+    const catRes = await pool.query('SELECT category_id, name FROM category');
+    const brandRes = await pool.query('SELECT brand_id, name FROM brand');
+    const subRes = await pool.query('SELECT srno, category_id, name FROM subcategory');
+
+    const categoryMap = new Map();
+    catRes.rows.forEach(c => categoryMap.set(c.name.trim().toLowerCase(), c.category_id));
+
+    const brandMap = new Map();
+    brandRes.rows.forEach(b => brandMap.set(b.name.trim().toLowerCase(), b.brand_id));
+
+    const subcategoryMap = new Map();
+    subRes.rows.forEach(s => subcategoryMap.set(`${s.category_id}_${s.name.trim().toLowerCase()}`, s.srno));
+
+    const getOrCreateCategory = async (catName) => {
+        if (!catName || !catName.toString().trim()) {
+            if (categoryMap.size > 0) return categoryMap.values().next().value;
+            const ins = await pool.query("INSERT INTO category (name, active, createdate) VALUES ('General', true, NOW()) RETURNING category_id");
+            categoryMap.set('general', ins.rows[0].category_id);
+            return ins.rows[0].category_id;
+        }
+        const key = catName.toString().trim().toLowerCase();
+        if (categoryMap.has(key)) return categoryMap.get(key);
+
+        const ins = await pool.query("INSERT INTO category (name, active, createdate) VALUES ($1, true, NOW()) RETURNING category_id", [catName.toString().trim()]);
+        const newId = ins.rows[0].category_id;
+        categoryMap.set(key, newId);
+        return newId;
+    };
+
+    const getOrCreateBrand = async (brandName) => {
+        if (!brandName || !brandName.toString().trim()) {
+            if (brandMap.size > 0) return brandMap.values().next().value;
+            const ins = await pool.query("INSERT INTO brand (name, active, createdate) VALUES ('Generic', true, NOW()) RETURNING brand_id");
+            brandMap.set('generic', ins.rows[0].brand_id);
+            return ins.rows[0].brand_id;
+        }
+        const key = brandName.toString().trim().toLowerCase();
+        if (brandMap.has(key)) return brandMap.get(key);
+
+        const ins = await pool.query("INSERT INTO brand (name, active, createdate) VALUES ($1, true, NOW()) RETURNING brand_id", [brandName.toString().trim()]);
+        const newId = ins.rows[0].brand_id;
+        brandMap.set(key, newId);
+        return newId;
+    };
+
+    const getOrCreateSubcategory = async (subName, catId) => {
+        if (!subName || !subName.toString().trim() || !catId) return null;
+        const key = `${catId}_${subName.toString().trim().toLowerCase()}`;
+        if (subcategoryMap.has(key)) return subcategoryMap.get(key);
+
+        const ins = await pool.query("INSERT INTO subcategory (category_id, name, active, createdate) VALUES ($1, $2, true, NOW()) RETURNING srno", [catId, subName.toString().trim()]);
+        const newId = ins.rows[0].srno;
+        subcategoryMap.set(key, newId);
+        return newId;
+    };
+
+    let importedCount = 0;
+    let updatedCount = 0;
+    const errors = [];
+    const affectedProductIds = [];
+
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowNum = i + 2;
+
+        const productName = (row['Product Name'] || row.Product || row.productname || row.name || row.Title || row.title || '').toString().trim();
+        if (!productName) {
+            errors.push(`Row ${rowNum}: Skipped because product name is missing.`);
+            continue;
+        }
+
+        try {
+            const catName = row.Category || row['Category Name'] || row.category_name || row.category || '';
+            const brandName = row.Brand || row['Brand Name'] || row.brand_name || row.brand || '';
+            const subName = row.Subcategory || row['Sub Category'] || row['Subcategory Name'] || row['Sub-Category'] || row['Sub-category'] || row.subcategory_name || row.subcategory || '';
+
+            const categoryId = await getOrCreateCategory(catName);
+            const brandId = await getOrCreateBrand(brandName);
+            const subcategoryId = await getOrCreateSubcategory(subName, categoryId);
+
+            const rawOriginalPrice = row['Original Price'] || row.originalprice || row['OriginalPrice'] || row['MRP (Rs)'] || row.MRP || row.Price || row.price || 0;
+            const originalPrice = parseFloat(rawOriginalPrice) || 0;
+            const discount = parseFloat(row['Discount %'] || row.Discount || row.discount || 0);
+            const rawPrice = row.Price || row.price || row['Price (Current)'] || row['Current Price'] || (discount > 0 ? (originalPrice - (originalPrice * discount / 100)) : originalPrice);
+            const price = parseFloat(rawPrice) || originalPrice;
+
+            const description = (row.Description || row.description || row.Desc || `${productName} Ayurvedic formulation`).toString().trim();
+            const shortDescription = (row['Short Description'] || row.shortdescription || row.short_description || '').toString().trim();
+
+            const medicineSize = (row['Medicine Size'] || row.Size || row['Pack Size'] || row.medicinesize || row.medicine_size || row.size || '').toString().trim();
+            const storageInstructions = (row['Storage Instructions'] || row['Storage Instructions '] || row['Storage'] || row.storage_instructions || row.storageInstructions || '').toString().trim();
+
+            const directionParts = [
+                row['Direction to use'],
+                row['Direction to use_1'],
+                row['Directions for Use'],
+                row.Directions,
+                row.directions,
+                row.usage
+            ].filter(Boolean).map(d => d.toString().trim());
+            const directionsText = directionParts.join('\n');
+            const usageArray = directionParts.flatMap(d => d.split('\n')).map(s => s.trim()).filter(Boolean);
+
+            let benefits = [];
+            const rawBenefits = row.Benefits || row.benefits || row['Key Benefits'];
+            if (Array.isArray(rawBenefits)) {
+                benefits = rawBenefits;
+            } else if (typeof rawBenefits === 'string' && rawBenefits.trim()) {
+                benefits = rawBenefits.split(/[;\n\u2022]/).map(b => b.replace(/^[-*•]\s*/, '').trim()).filter(Boolean);
+            }
+
+            let ingredients = [];
+            const rawIngredients = row.Ingredients || row.ingredients || row['Key Ingredients'];
+            if (Array.isArray(rawIngredients)) {
+                ingredients = rawIngredients;
+            } else if (typeof rawIngredients === 'string' && rawIngredients.trim()) {
+                ingredients = rawIngredients.split(/[,;\n]/).map(ig => ig.trim()).filter(Boolean);
+            }
+
+            let supports = [];
+            const rawSupports = row.Supports || row.supports || row['Health Concerns'] || row['Health Tags'];
+            if (Array.isArray(rawSupports)) {
+                supports = rawSupports;
+            } else if (typeof rawSupports === 'string' && rawSupports.trim()) {
+                supports = rawSupports.split(/[,;\n]/).map(sp => sp.trim()).filter(Boolean);
+            }
+
+            const quantity = parseInt(row.Quantity || row.Stock || row.stock_quantity || row.quantity || 100) || 100;
+            const inStock = quantity > 0;
+            const active = row.Active !== undefined ? (row.Active === true || row.Active === 'true' || row.Active === 1 || row.Active === '1') : true;
+
+            const rawImage = row.Image || row['Image URL'] || row.image || row.Images || '';
+            const image = (typeof rawImage === 'string' && rawImage.trim().startsWith('http')) ? rawImage.trim() : 'https://via.placeholder.com/300';
+            const productImages = [image];
+
+            const existing = await pool.query(
+                "SELECT product_id FROM products WHERE TRIM(LOWER(productname)) = TRIM(LOWER($1)) LIMIT 1",
+                [productName]
+            );
+
+            if (existing.rows.length > 0) {
+                const prodId = existing.rows[0].product_id;
+                await pool.query(
+                    `UPDATE products 
+                    SET description = $2, shortdescription = $3, price = $4, originalprice = $5,
+                        discount = $6, category_id = $7, brand = $8, image = $9, instock = $10,
+                        benefits = $11, ingredients = $12, usage = $13, directions = $14,
+                        quantity = $15, stock_quantity = $15, supports = $16, product_images = $17,
+                        subcategory_id = $18, active = $19, storage_instructions = $20, medicine_size = $21,
+                        updated_at = NOW()
+                    WHERE product_id = $1`,
+                    [prodId, description, shortDescription, price, originalPrice, discount, categoryId, brandId, image, inStock, benefits, ingredients, usageArray, directionsText, quantity, supports, productImages, subcategoryId, active, storageInstructions, medicineSize]
+                );
+                affectedProductIds.push(prodId);
+                updatedCount++;
+            } else {
+                const insRes = await pool.query(
+                    `INSERT INTO products 
+                    (productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, stock_quantity, supports, product_images, subcategory_id, active, storage_instructions, medicine_size, createdate, updated_at) 
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, $11, $12, $13, $14, $15, $15, $16, $17, $18, $19, $20, $21, NOW(), NOW()) RETURNING product_id`,
+                    [productName, description, shortDescription, price, originalPrice, discount, categoryId, brandId, image, inStock, benefits, ingredients, usageArray, directionsText, quantity, supports, productImages, subcategoryId, active, storageInstructions, medicineSize]
+                );
+                if (insRes.rows[0]) {
+                    affectedProductIds.push(insRes.rows[0].product_id);
+                }
+                importedCount++;
+            }
+        } catch (rowErr) {
+            console.error(`Error importing row ${rowNum} (${productName}):`, rowErr.message);
+            errors.push(`Row ${rowNum} (${productName}): ${rowErr.message}`);
+        }
+    }
+
+    if (affectedProductIds.length > 0) {
+        try {
+            await pool.query(
+                `INSERT INTO product_sheet_imports 
+                (sheet_name, file_name, total_products, imported_count, updated_count, product_ids, status, uploaded_at)
+                VALUES ($1, $2, $3, $4, $5, $6, 'completed', NOW())`,
+                [
+                    options.sheetName || 'Imported Sheet',
+                    options.fileName || 'Excel Import',
+                    rows.length,
+                    importedCount,
+                    updatedCount,
+                    affectedProductIds
+                ]
+            );
+        } catch (histErr) {
+            console.error('Failed to record sheet import history:', histErr);
+        }
+    }
+
+    return {
+        total: rows.length,
+        imported: importedCount,
+        updated: updatedCount,
+        errors
+    };
+};
+
+exports.getImportHistory = async () => {
+    const res = await pool.query(`
+        SELECT id, sheet_name, file_name, total_products, imported_count, updated_count,
+               COALESCE(array_length(product_ids, 1), 0) as live_count,
+               status, uploaded_at, created_by
+        FROM product_sheet_imports
+        ORDER BY uploaded_at DESC
+    `);
+    return res.rows;
+};
+
+exports.deleteImportHistory = async (id) => {
+    const res = await pool.query("SELECT * FROM product_sheet_imports WHERE id = $1", [id]);
+    if (res.rows.length === 0) {
+        throw new Error("Sheet import history record not found");
+    }
+    const importRecord = res.rows[0];
+    const productIds = importRecord.product_ids || [];
+
+    let deletedCount = 0;
+    if (productIds.length > 0) {
+        // 1. Clean up references in all related tables to guarantee complete deletion and prevent foreign key blocks
+        await pool.query("DELETE FROM wishlist WHERE product_id = ANY($1::integer[])", [productIds]).catch(() => {});
+        await pool.query("DELETE FROM review WHERE productid = ANY($1::integer[])", [productIds]).catch(() => {});
+        await pool.query("DELETE FROM coupon_products WHERE product_id = ANY($1::integer[])", [productIds]).catch(() => {});
+        await pool.query("DELETE FROM whatsapp_campaign_products WHERE product_id = ANY($1::integer[])", [productIds]).catch(() => {});
+        await pool.query("DELETE FROM cart_items WHERE product_id = ANY($1::integer[])", [productIds]).catch(() => {});
+        
+        const stringIds = productIds.map(x => x.toString());
+        await pool.query("DELETE FROM favorites WHERE productid = ANY($1::varchar[])", [stringIds]).catch(() => {});
+        await pool.query("DELETE FROM chatbot_product_clicks WHERE product_id = ANY($1::varchar[])", [stringIds]).catch(() => {});
+
+        // 2. Delete products from main products table
+        const delRes = await pool.query(
+            "DELETE FROM products WHERE product_id = ANY($1::integer[]) RETURNING product_id",
+            [productIds]
+        );
+        deletedCount = delRes.rowCount;
+    }
+
+    // 3. Remove sheet record from product_sheet_imports
+    await pool.query("DELETE FROM product_sheet_imports WHERE id = $1", [id]);
+
+    return {
+        success: true,
+        deletedSheet: importRecord.sheet_name,
+        deletedFile: importRecord.file_name,
+        deletedProductsCount: deletedCount
+    };
 };
