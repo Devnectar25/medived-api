@@ -240,6 +240,36 @@ exports.bulkCreateProducts = async (req, res) => {
         if (!Array.isArray(products) || products.length === 0) {
             return res.status(400).json({ success: false, message: "Products array is required" });
         }
+
+        const REQUIRED_COLUMNS = [
+            'Product Name',
+            'Category',
+            'Subcategory',
+            'Brand',
+            'Medicine Size',
+            'Original Price',
+            'Supports',
+            'Description',
+            'Benefits',
+            'Ingredients',
+            'Storage Instructions'
+        ];
+
+        const firstRow = products[0] || {};
+        const normalizedKeys = Object.keys(firstRow).map(k => k.trim().toLowerCase().replace(/[\s_\-]+/g, ''));
+
+        const missingCols = REQUIRED_COLUMNS.filter(col => {
+            const normCol = col.toLowerCase().replace(/[\s_\-]+/g, '');
+            return !normalizedKeys.includes(normCol);
+        });
+
+        if (missingCols.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: `Column mismatch: Missing required column(s): ${missingCols.join(', ')}. Only sheets matching the given columns can be uploaded.`
+            });
+        }
+
         const result = await productService.importProductsFromRows(products, { sheetName, fileName });
         res.json({ success: true, ...result });
     } catch (error) {

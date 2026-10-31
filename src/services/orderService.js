@@ -553,6 +553,15 @@ exports.requestReturnReplace = async (orderId, userId, data) => {
 
         // 3. Process each item individually (Row Splitting for partial quantities)
         const isReturn = type === 'Return';
+        if (isReturn) {
+            if (!bankDetails || !bankDetails.ifscCode) {
+                throw new Error("Bank IFSC code is required for refunds");
+            }
+            const cleanIfsc = bankDetails.ifscCode.toString().trim().toUpperCase();
+            if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanIfsc)) {
+                throw new Error("Please enter a valid 11-character IFSC code (e.g. HDFC0001234)");
+            }
+        }
         const itemStatus = isReturn ? 'Return Request Processing' : 'Replacement Request Processing';
 
         for (const reqItem of requestedItems) {
