@@ -35,14 +35,52 @@ const HOMVED_ORIGIN = {
     state: "Maharashtra"
 };
 
+// ── Network timeouts (ms): DTDC calls must never hang an admin request indefinitely ──
+const DTDC_TIMEOUT_MS = {
+    booking: 30000,   // softdata consignment creation
+    label: 30000,     // label PDF stream (~1-3s typical)
+    tracking: 15000,  // track details (~50-150ms typical)
+    auth: 15000,      // token renewal (~1s typical)
+};
+
+/** fetch() with a hard timeout and a readable error message */
+async function fetchWithTimeout(url, options, timeoutMs, label) {
+    const startedAt = Date.now();
+    try {
+        const response = await fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
+        console.log(`[DTDC] ${label} -> HTTP ${response.status} in ${Date.now() - startedAt}ms`);
+        return response;
+    } catch (err) {
+        if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+            throw new Error(`DTDC ${label} timed out after ${Math.round(timeoutMs / 1000)}s. DTDC servers may be slow; please try again.`);
+        }
+        throw new Error(`DTDC ${label} request failed: ${err.message}`);
+    }
+}
+
+/** Parse a DTDC JSON response, surfacing HTML / plain-text error pages clearly */
+async function readJson(response, label) {
+    const text = await response.text();
+    try {
+        return JSON.parse(text);
+    } catch {
+        throw new Error(`DTDC ${label} returned an unexpected response (HTTP ${response.status}): ${text.slice(0, 200)}`);
+    }
+}
+
 /**
  * Helper to fetch a fresh tracking access token if expired
  */
 async function refreshTrackingToken() {
     try {
         console.log('[DTDC] Refreshing tracking access token via API #4...');
-        const authUrl = `${DTDC_TRACK_BASE_URL}/dtdcapi/api/dtdc/authenticate?username=${encodeURIComponent(DTDC_TRACK_USERNAME)}&password=${encodeURIComponent(DTDC_TRACK_PASSWORD)}`;
-        const response = await fetch(authUrl, { method: 'GET' });
+        // NOTE: path is /dtdc-api/ (with hyphen). /dtdcapi/ always returns 401.
+        const authUrl = `${DTDC_TRACK_BASE_URL}/dtdc-api/api/dtdc/authenticate?username=${encodeURIComponent(DTDC_TRACK_USERNAME)}&password=${encodeURIComponent(DTDC_TRACK_PASSWORD)}`;
+        const response = await fetchWithTimeout(authUrl, { method: 'GET' }, DTDC_TIMEOUT_MS.auth, 'auth');
+        if (!response.ok) {
+            console.error('[DTDC] Token renewal failed with status', response.status);
+            return cachedTrackingToken;
+        }
         
         // Some DTDC servers return token in header or body
         const tokenFromHeader = response.headers.get('x-access-token');
@@ -120,8 +158,26 @@ exports.createShipment = async (orderId, packageOptions = {}) => {
         throw new Error('Destination pincode is missing for this order.');
     }
 
+    // Replacement (-REP) orders are free for the customer: never collect cash on delivery,
+    // and declare the real product value (their order total is ₹0)
+    const isReplacementOrder = order.is_replacement === true;
+    let replacementValue = 0;
+    if (isReplacementOrder) {
+        replacementValue = parseFloat(order.original_total || 0);
+        if (!(replacementValue > 0) && order.parent_order_id) {
+            const parentItems = await pool.query(
+                `SELECT product_id, price FROM order_items WHERE order_id = $1`,
+                [order.parent_order_id]
+            );
+            const priceByProduct = new Map(parentItems.rows.map(r => [String(r.product_id), parseFloat(r.price) || 0]));
+            replacementValue = (order.items || []).reduce(
+                (sum, it) => sum + (priceByProduct.get(String(it.product_id)) || 0) * (parseInt(it.quantity) || 1), 0
+            );
+        }
+    }
+
     // Determine COD details
-    const isCOD = (order.payment_method === 'cod' || order.payment_type === 'COD');
+    const isCOD = !isReplacementOrder && (order.payment_method === 'cod' || order.payment_type === 'COD');
     const codAmount = isCOD ? Math.round(parseFloat(order.total || 0)).toString() : "";
     const codCollectionMode = isCOD ? "cash" : "";
 
@@ -130,7 +186,8 @@ exports.createShipment = async (orderId, packageOptions = {}) => {
     const width = (packageOptions.width || 10).toString();
     const height = (packageOptions.height || 10).toString();
     const weight = (packageOptions.weight || 0.5).toString();
-    const declaredValue = Math.round(parseFloat(order.total || 500)).toString();
+    const baseValue = isReplacementOrder ? replacementValue : parseFloat(order.total || 0);
+    const declaredValue = Math.round(baseValue > 0 ? baseValue : 500).toString();
 
     // Prepare softdata payload
     const payload = {
@@ -200,16 +257,16 @@ exports.createShipment = async (orderId, packageOptions = {}) => {
 
     console.log(`[DTDC] Creating shipment for Order ${order.order_number}...`);
 
-    const response = await fetch(`${DTDC_BASE_URL}/api/customer/integration/consignment/softdata`, {
+    const response = await fetchWithTimeout(`${DTDC_BASE_URL}/api/customer/integration/consignment/softdata`, {
         method: 'POST',
         headers: {
             'api-key': DTDC_API_KEY,
             'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload)
-    });
+    }, DTDC_TIMEOUT_MS.booking, 'booking');
 
-    const responseData = await response.json();
+    const responseData = await readJson(response, 'booking');
     console.log('[DTDC] Softdata Response:', JSON.stringify(responseData, null, 2));
 
     if (responseData.status !== 'OK' || !responseData.data || !responseData.data[0]) {
@@ -262,12 +319,12 @@ exports.getShippingLabel = async (trackingNumber) => {
     
     console.log(`[DTDC] Requesting shipping label for AWB: ${trackingNumber}`);
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
         method: 'GET',
         headers: {
             'api-key': DTDC_API_KEY
         }
-    });
+    }, DTDC_TIMEOUT_MS.label, 'label');
 
     if (!response.ok) {
         const errText = await response.text();
@@ -295,7 +352,7 @@ exports.trackShipment = async (trackingNumber) => {
     let token = cachedTrackingToken;
 
     const executeTrack = async (currentToken) => {
-        return await fetch(trackUrl, {
+        return await fetchWithTimeout(trackUrl, {
             method: 'POST',
             headers: {
                 'x-access-token': currentToken,
@@ -306,7 +363,7 @@ exports.trackShipment = async (trackingNumber) => {
                 strcnno: trackingNumber,
                 addtnlDtl: 'Y'
             })
-        });
+        }, DTDC_TIMEOUT_MS.tracking, 'tracking');
     };
 
     let response = await executeTrack(token);
@@ -323,11 +380,12 @@ exports.trackShipment = async (trackingNumber) => {
         throw new Error(`DTDC Tracking API returned status ${response.status}: ${errText}`);
     }
 
-    const data = await response.json();
-    console.log('[DTDC] Track API raw response:', JSON.stringify(data, null, 2));
+    const data = await readJson(response, 'tracking');
 
-    // Handle "No data found" case (shipment newly created, waiting for pickup scan)
-    if (data.errorDetails && data.errorDetails.includes('NO DATA FOUND')) {
+    // Handle "No data found" case (shipment newly created, waiting for pickup scan).
+    // DTDC has no scan time yet, so don't fabricate one from the current server time.
+    const errorText = JSON.stringify(data.errorDetails || '');
+    if (errorText.includes('NO DATA FOUND')) {
         return {
             success: true,
             trackingNumber: trackingNumber,
@@ -335,15 +393,15 @@ exports.trackShipment = async (trackingNumber) => {
             statusCategory: 'Booked',
             origin: HOMVED_ORIGIN.city,
             destination: 'Destination Hub',
-            bookedDate: new Date().toISOString(),
+            bookedDate: '',
             isDelivered: false,
             timeline: [
                 {
                     action: 'Shipment Booked (Softdata)',
-                    date: new Date().toLocaleDateString('en-GB'),
-                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    date: '',
+                    time: '',
                     location: HOMVED_ORIGIN.city,
-                    remarks: 'Shipment created electronically with DTDC. Ready for carrier handover.'
+                    remarks: 'Shipment created electronically with DTDC. Awaiting first pickup scan.'
                 }
             ],
             raw: data
@@ -433,6 +491,12 @@ exports.createReverseShipment = async (orderId, packageOptions = {}) => {
 
     const order = orderRes.rows[0];
 
+    // Idempotent: never book a second reverse pickup for the same order
+    if (order.reverse_tracking_id) {
+        console.log(`[DTDC] Reverse pickup already booked for ${order.order_number}: ${order.reverse_tracking_id}`);
+        return { success: true, alreadyBooked: true, reverseTrackingNumber: order.reverse_tracking_id, order };
+    }
+
     // Customer is origin for reverse pickup
     const pickupName = (order.customer_name || 'Customer').trim();
     const pickupPhone = (order.customer_phone || '9999999999').replace(/[^0-9]/g, '').slice(-10) || '9999999999';
@@ -449,7 +513,12 @@ exports.createReverseShipment = async (orderId, packageOptions = {}) => {
     const width = (packageOptions.width || 10).toString();
     const height = (packageOptions.height || 10).toString();
     const weight = (packageOptions.weight || 0.5).toString();
-    const declaredValue = Math.round(parseFloat(order.total || 500)).toString();
+    // Declare only the value of the items actually coming back (not the whole order)
+    const returningValue = (order.items || [])
+        .filter(it => /^(Return|Replace)/.test(it.status || '') || it.status === 'Replacement Request Processing')
+        .reduce((sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.quantity) || 1), 0);
+    const reverseBase = returningValue > 0 ? returningValue : parseFloat(order.total || 0);
+    const declaredValue = Math.round(reverseBase > 0 ? reverseBase : 500).toString();
 
     // Prepare reverse softdata payload
     const payload = {
@@ -519,16 +588,16 @@ exports.createReverseShipment = async (orderId, packageOptions = {}) => {
 
     console.log(`[DTDC] Creating REVERSE shipment for Order ${order.order_number}...`);
 
-    const response = await fetch(`${DTDC_BASE_URL}/api/customer/integration/consignment/softdata`, {
+    const response = await fetchWithTimeout(`${DTDC_BASE_URL}/api/customer/integration/consignment/softdata`, {
         method: 'POST',
         headers: {
             'api-key': DTDC_API_KEY,
             'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload)
-    });
+    }, DTDC_TIMEOUT_MS.booking, 'reverse booking');
 
-    const responseData = await response.json();
+    const responseData = await readJson(response, 'reverse booking');
     console.log('[DTDC] Reverse Softdata Response:', JSON.stringify(responseData, null, 2));
 
     if (responseData.status !== 'OK' || !responseData.data || !responseData.data[0]) {

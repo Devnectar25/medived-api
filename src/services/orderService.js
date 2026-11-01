@@ -4,6 +4,62 @@ const paymentService = require('./paymentService');
 const dtdcService = require('./dtdcService');
 const whatsappService = require('./whatsappService');
 
+// ── Reverse logistics (parcel collection from customer) lifecycle ──────────
+// Return:  Return Approved → Return Pickup Scheduled → Return Out for Pickup → Return Collected → Return In Transit → Received at Homved → Refunded
+// Replace: Replace Approved → Replace Pickup Scheduled → Replace Out for Pickup → Replace Collected → Replace In Transit → Received at Homved
+//          → Replacement Processing → Replacement Shipped → Replacement Out for Delivery → Replaced
+const RETURN_PICKUP_STAGES = ['Return Pickup Scheduled', 'Return Out for Pickup', 'Return Collected', 'Return In Transit'];
+const REPLACE_PICKUP_STAGES = ['Replace Pickup Scheduled', 'Replace Out for Pickup', 'Replace Collected', 'Replace In Transit'];
+const REPLACEMENT_DELIVERY_STAGES = ['Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery'];
+const RETURN_CYCLE_ITEM_STATUSES = ['Return Approved', 'Return Processing', ...RETURN_PICKUP_STAGES];
+const REPLACE_CYCLE_ITEM_STATUSES = ['Replace Approved', ...REPLACE_PICKUP_STAGES, ...REPLACEMENT_DELIVERY_STAGES];
+
+// QA inspection outcome statuses (after parcel is Received at Homved)
+const QA_STATUSES = ['Return QA Passed', 'Return QA Failed', 'Replace QA Passed', 'Replace QA Failed'];
+// Return orders in these states cannot be refunded until QA has passed
+const REFUND_BLOCKED_UNTIL_QA = ['Return Approved', 'Return Processing', ...RETURN_PICKUP_STAGES, 'Received at Homved', 'Return QA Failed'];
+
+// ── List-query column projection ───────────────────────────────────────────
+// orders.return_images stores base64 photos (up to ~1MB per order). Selecting o.* in list endpoints
+// transfers all of it over the network on every request/poll. List queries use this projection instead.
+const HEAVY_ORDER_COLUMNS = ['return_images'];
+let orderListColumnsCache = null;
+const getOrderListColumns = async () => {
+    if (orderListColumnsCache) return orderListColumnsCache;
+    const res = await pool.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'orders' ORDER BY ordinal_position`
+    );
+    orderListColumnsCache = res.rows
+        .map(r => r.column_name)
+        .filter(c => !HEAVY_ORDER_COLUMNS.includes(c))
+        .map(c => `o."${c.replace(/"/g, '""')}"`)
+        .join(', ');
+    return orderListColumnsCache;
+};
+
+// Real goods value of a free replacement (-REP) order: replaced quantities × the unit price
+// paid on the parent order. (The -REP order itself is ₹0 for the customer.)
+const REPLACEMENT_VALUE_SQL = `
+    CASE WHEN o.is_replacement = TRUE THEN (
+        SELECT ROUND(COALESCE(SUM(ri.quantity * COALESCE(
+            (SELECT MAX(pi.price) FROM order_items pi
+             WHERE pi.order_id = o.parent_order_id AND pi.product_id = ri.product_id), 0)), 0), 2)
+        FROM order_items ri WHERE ri.order_id = o.id
+    ) END AS replacement_value`;
+
+let qaColumnsEnsured = false;
+const ensureQaColumns = async () => {
+    if (qaColumnsEnsured) return;
+    await pool.query(`
+        ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS qa_status VARCHAR(20);
+        ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS qa_notes TEXT;
+        ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS qa_checked_at TIMESTAMP;
+        ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS qa_checked_by VARCHAR(100);
+    `);
+    qaColumnsEnsured = true;
+};
+
 exports.createOrder = async (orderData) => {
     const client = await pool.connect();
     try {
@@ -302,9 +358,13 @@ exports.getAllOrders = async (options = {}) => {
     const totalCount = parseInt(countResult.rows[0].count);
 
     const queryParams = [...params, limit, offset];
+    // Exclude heavy base64 return photos from the list payload (loaded on demand via GET /orders/:id)
+    const orderColumns = await getOrderListColumns();
 
     const orderResult = await pool.query(
-        `SELECT o.*, u.fullname as customer_name, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+        `SELECT ${orderColumns}, u.fullname as customer_name, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+                COALESCE(array_length(o.return_images, 1), 0) AS return_images_count,
+                ${REPLACEMENT_VALUE_SQL},
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
@@ -384,11 +444,15 @@ exports.getCancelledOrders = async (options = {}) => {
     }
     // 'All' = no extra filter, return everything
 
-    const countResult = await pool.query(`SELECT COUNT(*) ${baseQuery}`, queryParams);
-    const totalCount = parseInt(countResult.rows[0].count);
+    // Run count + page query in parallel (each is a network round trip to the remote DB)
+    const countPromise = pool.query(`SELECT COUNT(*) ${baseQuery}`, queryParams);
+    const orderColumns = await getOrderListColumns();
 
-    const orderResult = await pool.query(
-        `SELECT o.*, u.fullname as customer_name, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+    const orderPromise = pool.query(
+        `SELECT ${orderColumns}, u.fullname as customer_name, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+                -- PERFORMANCE: return_images (base64 photos) is excluded from the list payload;
+                -- the Refund Desk loads photos on demand via GET /orders/:id when a request is opened.
+                COALESCE(array_length(o.return_images, 1), 0) AS return_images_count,
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
@@ -447,6 +511,9 @@ exports.getCancelledOrders = async (options = {}) => {
         [...queryParams, limit, offset]
     );
 
+    const [countResult, orderResult] = await Promise.all([countPromise, orderPromise]);
+    const totalCount = parseInt(countResult.rows[0].count);
+
     return {
         orders: orderResult.rows,
         totalCount: totalCount,
@@ -475,9 +542,13 @@ exports.getCancelledOrdersStats = async () => {
 };
 
 exports.getOrdersByUser = async (userId) => {
-    // Use json_agg to avoid N+1 query problem and improve performance
+    // Use json_agg to avoid N+1 query problem and improve performance.
+    // Base64 return photos are excluded: customer order lists poll frequently and never display them.
+    const orderColumns = await getOrderListColumns();
     const orderResult = await pool.query(
-        `SELECT o.*, u.fullname as customer_name, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+        `SELECT ${orderColumns}, u.fullname as customer_name, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+                COALESCE(array_length(o.return_images, 1), 0) AS return_images_count,
+                ${REPLACEMENT_VALUE_SQL},
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
@@ -500,6 +571,7 @@ exports.getOrdersByUser = async (userId) => {
 exports.getOrderById = async (orderId) => {
     const orderResult = await pool.query(
         `SELECT o.*, u.fullname as customer_name, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+                ${REPLACEMENT_VALUE_SQL},
                 COALESCE(
                     (SELECT json_agg(items_data)
                      FROM (
@@ -553,6 +625,15 @@ exports.requestReturnReplace = async (orderId, userId, data) => {
 
         // 3. Process each item individually (Row Splitting for partial quantities)
         const isReturn = type === 'Return';
+        if (isReturn) {
+            if (!bankDetails || !bankDetails.ifscCode) {
+                throw new Error("Bank IFSC code is required for refunds");
+            }
+            const cleanIfsc = bankDetails.ifscCode.toString().trim().toUpperCase();
+            if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanIfsc)) {
+                throw new Error("Please enter a valid 11-character IFSC code (e.g. HDFC0001234)");
+            }
+        }
         const itemStatus = isReturn ? 'Return Request Processing' : 'Replacement Request Processing';
 
         for (const reqItem of requestedItems) {
@@ -784,6 +865,13 @@ exports.getOrderStats = async () => {
 };
 
 exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDetails = null, paymentStatus = null, itemIds = null, cancelledBy = null, trackingNumber = null) => {
+    // QA outcomes must go through recordQaInspection (handles refund gating / -REP creation)
+    if (QA_STATUSES.includes(status)) {
+        const err = new Error('QA results must be recorded via the QA inspection action.');
+        err.statusCode = 400;
+        throw err;
+    }
+
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -835,8 +923,15 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 // Determine stock adjustment
                 // If moving TO a cancelled state from a non-cancelled state -> Restore stock (+)
                 // If moving FROM a cancelled state to a non-cancelled state -> Reduce stock (-)
-                const isCancelling = (status === 'Cancelled' || status === 'CANCEL_APPROVED' || status === 'Return Approved' || status === 'Returned' || status === 'Refunded');
-                const wasCancelling = (originalItem.status === 'Cancelled' || originalItem.status === 'CANCEL_APPROVED' || originalItem.status === 'Return Approved' || originalItem.status === 'Returned' || originalItem.status === 'Refunded');
+                // Stock for RETURNED items is restored exactly once, when the parcel physically reaches the
+                // warehouse ("Received at Homved", order-level inventory automation below). Approving a return /
+                // moving through pickup stages must NOT touch stock, otherwise the unit is counted twice.
+                // Only cancellations (item never left the warehouse) restore stock here.
+                const returnCycleStatuses = ['Return Approved', 'Return Processing', ...RETURN_PICKUP_STAGES, 'Received at Homved', 'Return QA Passed', 'Return QA Failed'];
+                const stockReturnedStatuses = ['Cancelled', 'CANCEL_APPROVED', 'Returned', 'Refunded'];
+                const movingWithinReturnCycle = returnCycleStatuses.includes(status) || returnCycleStatuses.includes(originalItem.status);
+                const isCancelling = !movingWithinReturnCycle && stockReturnedStatuses.includes(status);
+                const wasCancelling = !movingWithinReturnCycle && stockReturnedStatuses.includes(originalItem.status);
 
                 // Replacement dispatch: decrement product stock for the shipped replacement unit
                 const isReplacementDispatch = (status === 'Replacement Shipped' || status === 'Replaced');
@@ -961,9 +1056,11 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                                 'Return Request Processing', 'Return Approved', 'Return Processing', 
                                 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked', 
                                 'Return Rejected', 'Return/Replace Pending',
-                                'Replace Requested', 'Replacement Request Processing', 'Replace Approved', 
-                                'Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery', 
-                                'Delivered', 'Replaced'
+                                'Replace Requested', 'Replacement Request Processing', 'Replace Approved', 'Replace Rejected',
+                                'Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery',
+                                'Delivered', 'Replaced',
+                                'Return Pickup Scheduled', 'Return Out for Pickup', 'Return In Transit',
+                                'Replace Pickup Scheduled', 'Replace Out for Pickup', 'Replace Collected', 'Replace In Transit'
                             ) THEN $7::text
                             ELSE status
                         END,
@@ -1053,7 +1150,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             ];
         } else if (status === 'Delivered') {
             console.log(`[OrderService] Marking order ${orderId} as Delivered and Payment as ${paymentStatus || 'Paid'}`);
-            updateQuery = `UPDATE orders SET status = $2, original_status = $2, payment_status = $3, payment_type = 'Paid', delivered_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
+            updateQuery = `UPDATE orders SET status = $2, original_status = $2, logistics_status = 'Delivered', payment_status = $3, payment_type = 'Paid', delivered_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`;
             updateParams = [orderId, status, paymentStatus || 'Paid'];
         } else if (status.includes('Return Approved') || status.includes('Return Rejected') ||
             status.includes('Replace Approved') || status.includes('Replace Rejected') ||
@@ -1167,6 +1264,45 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 const params = (itemIds && itemIds.length > 0) ? [orderId, ids] : [orderId];
                 await client.query(`UPDATE order_items SET status = 'Replace Approved' WHERE ${whereClause}`, params);
             }
+        } else if (RETURN_PICKUP_STAGES.includes(status) || REPLACE_PICKUP_STAGES.includes(status) || REPLACEMENT_DELIVERY_STAGES.includes(status)) {
+            // ── Reverse logistics stage update (parcel collection / replacement dispatch) ──
+            // Moves the order and its in-cycle items forward without touching original_status.
+            const isReturnStage = RETURN_PICKUP_STAGES.includes(status);
+
+            // "Pickup Scheduled" = book the DTDC reverse pickup (customer → Homved) right now.
+            // Idempotent: reuses the existing reverse AWB if one was already booked.
+            // If DTDC rejects the booking, the stage change is aborted so the journey never claims
+            // a pickup that doesn't exist.
+            if ((status === 'Return Pickup Scheduled' || status === 'Replace Pickup Scheduled') && !oldOrder.reverse_tracking_id) {
+                try {
+                    const reverse = await dtdcService.createReverseShipment(orderId);
+                    console.log(`[OrderService] Reverse pickup booked for ${oldOrder.order_number}: ${reverse.reverseTrackingNumber}`);
+                } catch (bookingErr) {
+                    const err = new Error(`Could not schedule DTDC reverse pickup: ${bookingErr.message}`);
+                    err.statusCode = 502;
+                    throw err;
+                }
+            }
+
+            const cycleStatuses = isReturnStage ? [...RETURN_CYCLE_ITEM_STATUSES] : [...REPLACE_CYCLE_ITEM_STATUSES];
+            if (!isReturnStage && oldStatus === 'Received at Homved') {
+                cycleStatuses.push('Received at Homved');
+            }
+
+            await client.query(
+                `UPDATE order_items SET status = $2::text
+                 WHERE order_id = $1::uuid AND status = ANY($3::text[])`,
+                [orderId, status, cycleStatuses]
+            );
+
+            updateQuery = `UPDATE orders SET
+                           status = $2::text,
+                           logistics_status = $2::text,
+                           is_returned_order = CASE WHEN $3::boolean THEN TRUE ELSE is_returned_order END,
+                           refund_status = CASE WHEN $3::boolean THEN COALESCE(refund_status, 'Pending') ELSE refund_status END,
+                           updated_at = NOW()
+                           WHERE id = $1::uuid RETURNING *`;
+            updateParams = [orderId, status, isReturnStage];
         } else if (status === 'Restore') {
             const restoredStatus = oldOrder.original_status || 'Confirmed';
             console.log(`[OrderService] Restoring order ${orderId} to original status: ${restoredStatus}`);
@@ -1212,7 +1348,7 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                            is_returned_order = CASE WHEN $2::text IN ('Returned', 'Return Approved', 'Received at Homved', 'Return Request Processing', 'Return Requested', 'Partially Returning', 'Return Processing', 'Return Collected') THEN TRUE ELSE is_returned_order END,
                            refund_status = CASE WHEN $2::text IN ('Returned', 'Return Approved', 'Return Request Processing', 'Return Requested', 'Partially Returning', 'Return Processing', 'Return Collected') THEN COALESCE(refund_status, 'Pending') ELSE refund_status END,
                            is_product_received = CASE WHEN $2::text IN ('Received at Homved', 'Returned') THEN TRUE ELSE is_product_received END,
-                           logistics_status = CASE WHEN $2::text IN ('Received at Homved', 'Returned') THEN 'Received at Homved' ELSE logistics_status END,
+                           logistics_status = CASE WHEN $2::text IN ('Received at Homved', 'Returned') THEN 'Received at Homved' WHEN $2::text IN ('Shipped', 'Out for Delivery', 'Delivered') THEN $2::text ELSE logistics_status END,
                            updated_at = NOW() WHERE id = $1::uuid RETURNING *`;
             updateParams = [orderId, status, paymentStatus];
         }
@@ -1244,17 +1380,26 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 );
             } else if (status === 'Received at Homved') {
                 await client.query(
-                    `UPDATE order_items 
-                     SET status = 'Received at Homved' 
-                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
-                    [orderId]
+                    `UPDATE order_items
+                     SET status = 'Received at Homved'
+                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Return Request Processing' OR status = 'Return Requested'
+                        OR status = ANY($2::text[]))`,
+                    [orderId, [...RETURN_PICKUP_STAGES, 'Return Processing', 'Replace Approved', ...REPLACE_PICKUP_STAGES]]
                 );
             } else if (status === 'Refunded') {
                 await client.query(
-                    `UPDATE order_items 
-                     SET status = 'Refunded' 
-                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
-                    [orderId]
+                    `UPDATE order_items
+                     SET status = 'Refunded'
+                     WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested'
+                        OR status = ANY($2::text[]))`,
+                    [orderId, [...RETURN_PICKUP_STAGES, 'Return Processing', 'Return QA Passed']]
+                );
+            } else if (status === 'Replaced') {
+                await client.query(
+                    `UPDATE order_items
+                     SET status = 'Replaced'
+                     WHERE order_id = $1 AND status = ANY($2::text[])`,
+                    [orderId, [...REPLACE_CYCLE_ITEM_STATUSES, 'Received at Homved']]
                 );
             } else if (status === 'Returned') {
                 await client.query(
@@ -1352,10 +1497,18 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
         const isReceivedAtHomved = status === 'Received at Homved';
         const isOnlineFinalization = ['Refunded', 'Returned'].includes(status);
 
-        if ((isReceivedAtHomved || isOnlineFinalization) && !oldIsProductReceived) {
-            // Only restore stock for items NOT already cancelled (partial cancellation logic)
-            const itemsResult = await client.query(`SELECT product_id, quantity FROM order_items WHERE order_id = $1 AND (status IS NULL OR status != 'Cancelled')`, [orderId]);
-            console.log(`[INVENTORY AUTOMATION] Restoring stock for remaining items of order ${orderId} (Status: ${status}). Items: ${itemsResult.rows.length}`);
+        // Replacement parcels are not restocked on receipt (the defective unit goes to QA, not back on sale)
+        const isReplaceCycleOrder = oldOrder.return_type === 'Replace' || (oldStatus || '').startsWith('Replace');
+        if ((isReceivedAtHomved || isOnlineFinalization) && !oldIsProductReceived && !isReplaceCycleOrder) {
+            // Multi-item orders: restore stock ONLY for the items that actually came back.
+            // Items the customer kept (Delivered), cancelled items (already restocked on cancel) and
+            // replacement items must not be touched.
+            const itemsResult = await client.query(
+                `SELECT product_id, quantity FROM order_items
+                 WHERE order_id = $1 AND status IN ('Received at Homved', 'Returned', 'Refunded')`,
+                [orderId]
+            );
+            console.log(`[INVENTORY AUTOMATION] Restoring stock for returned items of order ${orderId} (Status: ${status}). Items: ${itemsResult.rows.length}`);
 
             for (const item of itemsResult.rows) {
                 await client.query(
@@ -1491,6 +1644,16 @@ exports.updateRefundStatus = async (orderId, refundData) => {
 
         const transitioningToFinal = refundStatus === 'Completed' || refundStatus === 'Refunded';
 
+        // ── QA gate: returned parcels must pass QA inspection before any refund is processed ──
+        if ((transitioningToFinal || refundStatus === 'Processing') && REFUND_BLOCKED_UNTIL_QA.includes(oldOrder.status) && oldOrder.return_type !== 'Replace') {
+            const reason = oldOrder.status === 'Return QA Failed'
+                ? 'This return failed QA inspection, so it is not eligible for a refund.'
+                : `Refund cannot be processed yet: the returned parcel must be received at Homved and pass QA inspection first (current status: "${oldOrder.status}").`;
+            const err = new Error(reason);
+            err.statusCode = 400;
+            throw err;
+        }
+
         let finalTxnId = txnId;
 
         if (isOnline && transitioningToFinal) {
@@ -1583,7 +1746,7 @@ exports.updateRefundStatus = async (orderId, refundData) => {
                                          WHERE order_id = $1 
                                            AND (status IS NULL OR status NOT IN (
                                                'Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'CANCEL_APPROVED',
-                                               'Return Requested', 'Return Request Processing', 'Return Approved', 'Return Processing', 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked',
+                                               'Return Requested', 'Return Request Processing', 'Return Approved', 'Return Processing', 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked', 'Return QA Passed', 'Replace QA Passed',
                                                'Replace Requested', 'Replacement Request Processing', 'Replace Approved', 'Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery', 'Replaced'
                                            ))
                                      ) THEN 'Refunded'
@@ -1596,7 +1759,7 @@ exports.updateRefundStatus = async (orderId, refundData) => {
                                 WHERE order_id = $1 
                                   AND (status IS NULL OR status NOT IN (
                                       'Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'CANCEL_APPROVED',
-                                      'Return Requested', 'Return Request Processing', 'Return Approved', 'Return Processing', 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked',
+                                      'Return Requested', 'Return Request Processing', 'Return Approved', 'Return Processing', 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked', 'Return QA Passed', 'Replace QA Passed',
                                       'Replace Requested', 'Replacement Request Processing', 'Replace Approved', 'Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery', 'Replaced'
                                   ))
                             ) THEN 'Refunded' 
@@ -1605,7 +1768,7 @@ exports.updateRefundStatus = async (orderId, refundData) => {
                                 WHERE order_id = $1 
                                   AND (status IS NULL OR status NOT IN (
                                       'Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'CANCEL_APPROVED',
-                                      'Return Requested', 'Return Request Processing', 'Return Approved', 'Return Processing', 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked',
+                                      'Return Requested', 'Return Request Processing', 'Return Approved', 'Return Processing', 'Return Collected', 'Received at Homved', 'Returned', 'Refunded', 'Restocked', 'Return QA Passed', 'Replace QA Passed',
                                       'Replace Requested', 'Replacement Request Processing', 'Replace Approved', 'Replacement Processing', 'Replacement Shipped', 'Replacement Out for Delivery', 'Replaced'
                                   ))
                             ) THEN 'Cancelled'
@@ -1627,15 +1790,15 @@ exports.updateRefundStatus = async (orderId, refundData) => {
         if (transitioningToFinal) {
             await client.query(
                 `UPDATE order_items 
-                 SET status = 'Refunded' 
-                 WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                 SET status = 'Refunded'
+                 WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested' OR status = 'Return QA Passed')`,
                 [orderId]
             );
         } else if (refundStatus === 'Restocked') {
             await client.query(
-                `UPDATE order_items 
-                 SET status = 'Returned' 
-                 WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested')`,
+                `UPDATE order_items
+                 SET status = 'Returned'
+                 WHERE order_id = $1 AND (status = 'Return Approved' OR status = 'Received at Homved' OR status = 'Return Request Processing' OR status = 'Return Requested' OR status = 'Return QA Passed')`,
                 [orderId]
             );
         }
@@ -1924,13 +2087,37 @@ exports.confirmReceivedAndCreateReplacement = async (orderId) => {
 
         // 3. Mark original parent order as 'Received at Homved'
         await client.query(`
-            UPDATE orders 
+            UPDATE orders
             SET status = 'Received at Homved',
                 is_product_received = true,
                 logistics_status = 'Received at Store',
                 updated_at = NOW()
             WHERE id = $1
         `, [orderId]);
+
+        const replacementOrderRecord = await createReplacementOrderTx(client, parentOrder);
+
+        await client.query('COMMIT');
+
+        return {
+            parentOrder: await exports.getOrderById(orderId),
+            replacementOrder: await exports.getOrderById(replacementOrderRecord.id)
+        };
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('[OrderService] confirmReceivedAndCreateReplacement Error:', error);
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * Creates the "-REP" replacement order (₹0, Confirmed, ready for DTDC dispatch) for a parent order.
+ * Must be called inside an open transaction. Returns the inserted order row.
+ */
+const createReplacementOrderTx = async (client, parentOrder) => {
+        const orderId = parentOrder.id;
 
         // 4. Determine items to replace
         const itemsRes = await client.query(`
@@ -1941,6 +2128,11 @@ exports.confirmReceivedAndCreateReplacement = async (orderId) => {
 
         // 5. Generate new replacement order with -REP suffix
         const repOrderNumber = `${parentOrder.order_number}-REP`;
+        // Value of the products being replaced (customer pays ₹0, but this is the real goods value
+        // used for display and as the DTDC declared value)
+        const replacedValue = itemsToReplace.reduce(
+            (sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.quantity) || 1), 0
+        );
 
         const insertRepOrder = await client.query(`
             INSERT INTO orders (
@@ -1957,7 +2149,7 @@ exports.confirmReceivedAndCreateReplacement = async (orderId) => {
             repOrderNumber,
             parentOrder.address_id,
             parentOrder.payment_method || 'cod',
-            parentOrder.total || 0,
+            replacedValue || parentOrder.total || 0,
             orderId
         ]);
 
@@ -1980,17 +2172,113 @@ exports.confirmReceivedAndCreateReplacement = async (orderId) => {
             ]);
         }
 
+        console.log(`[OrderService] Generated Replacement Order ${repOrderNumber} for Parent ${parentOrder.order_number}`);
+        return replacementOrderRecord;
+};
+
+/**
+ * QA inspection of a parcel that has been Received at Homved.
+ *  - Return  + pass → 'Return QA Passed'  (released to Refund Desk)
+ *  - Return  + fail → 'Return QA Failed'  (refund rejected, reason shown to customer)
+ *  - Replace + pass → 'Replace QA Passed' (-REP replacement order auto-created for dispatch)
+ *  - Replace + fail → 'Replace QA Failed' (replacement rejected, reason shown to customer)
+ */
+exports.recordQaInspection = async (orderId, { passed, notes, checkedBy } = {}) => {
+    await ensureQaColumns();
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const orderRes = await client.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
+        if (orderRes.rows.length === 0) throw new Error('Order not found');
+        const order = orderRes.rows[0];
+
+        if (order.status !== 'Received at Homved') {
+            const err = new Error(`QA inspection can only be done once the parcel is "Received at Homved" (current status: "${order.status}").`);
+            err.statusCode = 400;
+            throw err;
+        }
+        const cleanNotes = (notes || '').trim();
+        if (!passed && !cleanNotes) {
+            const err = new Error('Please provide the reason why the parcel failed QA.');
+            err.statusCode = 400;
+            throw err;
+        }
+
+        // Determine cycle: replacement if return_type says so or any item is in the replace cycle
+        const itemsRes = await client.query('SELECT * FROM order_items WHERE order_id = $1', [orderId]);
+        const isReplace = order.return_type === 'Replace' ||
+            itemsRes.rows.some(i => (i.status || '').startsWith('Replace'));
+        const prefix = isReplace ? 'Replace' : 'Return';
+        const newStatus = `${prefix} QA ${passed ? 'Passed' : 'Failed'}`;
+
+        // Items that were part of this reverse shipment
+        const cycleItemStatuses = ['Received at Homved', ...(isReplace ? REPLACE_CYCLE_ITEM_STATUSES : RETURN_CYCLE_ITEM_STATUSES)];
+        const affected = itemsRes.rows.filter(i => cycleItemStatuses.includes(i.status));
+
+        await client.query(
+            `UPDATE order_items SET status = $2::text WHERE order_id = $1::uuid AND status = ANY($3::text[])`,
+            [orderId, newStatus, cycleItemStatuses]
+        );
+
+        // Failed QA: product is not resellable → undo the stock restore done on "Received at Homved".
+        // Only returns are restocked on receipt (replacement units never are), and only the affected items.
+        if (!passed && order.is_product_received && !isReplace) {
+            for (const item of affected) {
+                await client.query(
+                    `UPDATE products
+                     SET stock_quantity = GREATEST(0, stock_quantity - $2),
+                         quantity = GREATEST(0, quantity - $2),
+                         instock = (CASE WHEN stock_quantity - $2 > 0 THEN true ELSE false END),
+                         updated_at = NOW()
+                     WHERE product_id = $1::integer`,
+                    [item.product_id, item.quantity]
+                );
+            }
+        }
+
+        await client.query(
+            `UPDATE orders SET
+                status = $2::text,
+                logistics_status = $2::text,
+                qa_status = $3::text,
+                qa_notes = $4::text,
+                qa_checked_at = NOW(),
+                qa_checked_by = $5::text,
+                rejection_reason = CASE WHEN $6::boolean THEN rejection_reason ELSE $4::text END,
+                refund_status = CASE
+                    WHEN $7::boolean AND $6::boolean THEN 'Pending'
+                    WHEN $7::boolean AND NOT $6::boolean THEN 'Rejected'
+                    ELSE refund_status
+                END,
+                updated_at = NOW()
+             WHERE id = $1::uuid`,
+            [orderId, newStatus, passed ? 'Passed' : 'Failed', cleanNotes || null, checkedBy || null, !!passed, !isReplace]
+        );
+
+        // Replacement passed QA → create the -REP order for dispatch
+        let replacementOrderRecord = null;
+        if (isReplace && passed) {
+            const existingRep = await client.query('SELECT * FROM orders WHERE parent_order_id = $1', [orderId]);
+            replacementOrderRecord = existingRep.rows[0] || await createReplacementOrderTx(client, order);
+        }
+
         await client.query('COMMIT');
 
-        console.log(`[OrderService] Generated Replacement Order ${repOrderNumber} for Parent ${parentOrder.order_number}`);
+        const updatedOrder = await exports.getOrderById(orderId);
+        try {
+            await whatsappService.sendOrderUpdateNotification(updatedOrder, newStatus);
+        } catch (notifyErr) {
+            console.error('[QA] Notification failed:', notifyErr.message);
+        }
 
         return {
-            parentOrder: await exports.getOrderById(orderId),
-            replacementOrder: await exports.getOrderById(replacementOrderRecord.id)
+            order: updatedOrder,
+            replacementOrder: replacementOrderRecord ? await exports.getOrderById(replacementOrderRecord.id) : null
         };
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error('[OrderService] confirmReceivedAndCreateReplacement Error:', error);
+        console.error('[OrderService] recordQaInspection Error:', error.message);
         throw error;
     } finally {
         client.release();

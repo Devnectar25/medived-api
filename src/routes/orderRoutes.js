@@ -34,6 +34,7 @@ router.patch('/:id/refund-status', authorize('admin'), orderController.updateRef
 router.post('/:id/return-request', orderController.requestReturnReplace);
 router.post('/:id/cancel-item', orderController.requestItemCancellation);
 router.post('/:id/replacement/create-order', authorize('admin'), orderController.confirmReceivedAndCreateReplacement);
+router.post('/:id/qa-inspection', authorize('admin'), orderController.recordQaInspection);
 router.patch('/:id/restock', authorize('admin'), orderController.restockOrder);
 
 module.exports = router;

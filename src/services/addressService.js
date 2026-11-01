@@ -11,6 +11,21 @@ exports.getAddressesByUserId = async (userId) => {
 exports.addAddress = async (data) => {
     const { user_id, address_label, full_address, city, state, postal_code, is_default } = data;
 
+    const cleanCity = (city || '').toString().trim();
+    if (!cleanCity || /\d/.test(cleanCity) || !/^[a-zA-Z\s]+$/.test(cleanCity)) {
+        throw new Error("City must contain characters only (numbers are not allowed)");
+    }
+
+    const cleanState = (state || '').toString().trim();
+    if (!cleanState || /\d/.test(cleanState) || !/^[a-zA-Z\s]+$/.test(cleanState)) {
+        throw new Error("State must contain characters only (numbers are not allowed)");
+    }
+
+    const cleanPostal = (postal_code || '').toString().trim();
+    if (!/^\d{6}$/.test(cleanPostal)) {
+        throw new Error("Please enter a valid 6-digit pincode");
+    }
+
     // If is_default is true, unset other default addresses for this user
     if (is_default) {
         await pool.query(
@@ -31,6 +46,21 @@ exports.addAddress = async (data) => {
 
 exports.updateAddress = async (id, data) => {
     const { address_label, full_address, city, state, postal_code, is_default, user_id } = data;
+
+    const cleanCity = (city || '').toString().trim();
+    if (!cleanCity || /\d/.test(cleanCity) || !/^[a-zA-Z\s]+$/.test(cleanCity)) {
+        throw new Error("City must contain characters only (numbers are not allowed)");
+    }
+
+    const cleanState = (state || '').toString().trim();
+    if (!cleanState || /\d/.test(cleanState) || !/^[a-zA-Z\s]+$/.test(cleanState)) {
+        throw new Error("State must contain characters only (numbers are not allowed)");
+    }
+
+    const cleanPostal = (postal_code || '').toString().trim();
+    if (!/^\d{6}$/.test(cleanPostal)) {
+        throw new Error("Please enter a valid 6-digit pincode");
+    }
 
     if (is_default) {
         await pool.query(

@@ -125,6 +125,7 @@ app.use('/api/subcategories', subcategoryRoutes);
 app.use('/api/health-tips', healthTipRoutes);
 app.use('/api/reviews', require('./routes/reviewRoutes'));
 app.use('/api/addresses', require('./routes/addressRoutes'));
+app.use('/api/bank-accounts', require('./routes/bankAccountRoutes'));
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/cart', require('./routes/cartRoutes'));
 app.use('/api/orders', require('./routes/orderRoutes'));
