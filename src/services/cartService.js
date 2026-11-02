@@ -51,7 +51,10 @@ exports.addToCart = async (userId, productId, quantity, setMode = false) => {
          FROM products p WHERE p.product_id = $2
          ON CONFLICT (user_id, product_id)
          DO UPDATE SET 
-            quantity = CASE WHEN $4 THEN EXCLUDED.quantity ELSE (SELECT LEAST(cart_items.quantity + EXCLUDED.quantity, p2.stock_quantity) FROM products p2 WHERE p2.product_id = cart_items.product_id) END, 
+            quantity = CASE 
+                WHEN $4 THEN LEAST(10, LEAST(EXCLUDED.quantity, (SELECT stock_quantity FROM products WHERE product_id = cart_items.product_id)))
+                ELSE (SELECT LEAST(10, LEAST(cart_items.quantity + EXCLUDED.quantity, p2.stock_quantity)) FROM products p2 WHERE p2.product_id = cart_items.product_id) 
+            END, 
             updated_at = NOW()
          RETURNING *`,
         [userId, productId, quantity, setMode]
@@ -63,7 +66,7 @@ exports.updateQuantity = async (userId, productId, quantity) => {
     // HOM-129: Cap quantity at available stock
     const result = await pool.query(
         `UPDATE cart_items
-         SET quantity = LEAST($3, (SELECT stock_quantity FROM products WHERE product_id = $2)), 
+         SET quantity = LEAST(10, LEAST($3, (SELECT stock_quantity FROM products WHERE product_id = $2))),
              updated_at = NOW()
          WHERE user_id = $1 AND product_id = $2
          RETURNING *`,
@@ -97,11 +100,11 @@ exports.syncCart = async (userId, localItems) => {
         // HOM-129: Ensure sync respects stock
         await pool.query(
             `INSERT INTO cart_items (user_id, product_id, quantity, updated_at)
-             SELECT $1, $2, LEAST($3, p.stock_quantity), NOW()
+             SELECT $1, $2, LEAST(10, LEAST($3, p.stock_quantity)), NOW()
              FROM products p WHERE p.product_id = $2
              ON CONFLICT (user_id, product_id)
              DO UPDATE SET 
-                quantity = LEAST(EXCLUDED.quantity, (SELECT stock_quantity FROM products WHERE product_id = cart_items.product_id)), 
+                quantity = LEAST(10, LEAST(EXCLUDED.quantity, (SELECT stock_quantity FROM products WHERE product_id = cart_items.product_id))), 
                 updated_at = NOW()`,
             [userId, item.id, item.quantity]
         );

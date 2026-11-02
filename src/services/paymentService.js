@@ -1,6 +1,7 @@
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const pool = require('../config/db');
+const couponService = require('./couponService');
 require('dotenv').config();
 
 let razorpayInstance = null;
@@ -69,10 +70,14 @@ exports.verifyPayment = async (verificationData, internalOrderId, userId) => {
 
     if (digest !== razorpay_signature) {
         // Log failure and update order status to Cancelled
-        await pool.query(
-            `UPDATE orders SET status = 'Cancelled', updated_at = NOW() WHERE id = $1`,
+        const failedOrderRes = await pool.query(
+            `UPDATE orders SET status = 'Cancelled', updated_at = NOW() WHERE id = $1 RETURNING coupon_code, coupon_id, user_id`,
             [internalOrderId]
         );
+        if (failedOrderRes.rows.length > 0 && failedOrderRes.rows[0].coupon_code) {
+            const fo = failedOrderRes.rows[0];
+            await couponService.restoreCouponUsage(pool, fo.coupon_code, fo.coupon_id, fo.user_id);
+        }
         return { success: false, message: 'Invalid signature' };
     }
 
