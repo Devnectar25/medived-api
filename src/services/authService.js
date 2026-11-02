@@ -11,17 +11,83 @@ const generateToken = (id, role) => {
     });
 };
 
-// In-memory OTP storage (for demo/simplicity)
+// In-memory OTP cache + Database persistence
 const otpStore = new Map();
 
 const generateOTP = () => {
     return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
+const saveOtpRecord = async (cleanEmail, record) => {
+    otpStore.set(cleanEmail, record);
+    try {
+        await pool.query(
+            `INSERT INTO verification_otps (email, otp, type, expires_at, registration_data, user_data)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (email) DO UPDATE
+             SET otp = EXCLUDED.otp,
+                 type = EXCLUDED.type,
+                 expires_at = EXCLUDED.expires_at,
+                 registration_data = EXCLUDED.registration_data,
+                 user_data = EXCLUDED.user_data,
+                 created_at = NOW()`,
+            [
+                cleanEmail,
+                record.otp,
+                record.type || 'login',
+                record.expires,
+                record.registrationData ? JSON.stringify(record.registrationData) : null,
+                record.userData ? JSON.stringify(record.userData) : null
+            ]
+        );
+    } catch (err) {
+        console.error('[authService] Failed to persist OTP to database (fallback in-memory):', err.message);
+    }
+};
+
+const getOtpRecord = async (cleanEmail) => {
+    let record = otpStore.get(cleanEmail);
+    if (!record) {
+        try {
+            const dbRes = await pool.query(
+                `SELECT email, otp, type, expires_at, registration_data, user_data 
+                 FROM verification_otps 
+                 WHERE LOWER(email) = $1`,
+                [cleanEmail]
+            );
+            if (dbRes.rows.length > 0) {
+                const row = dbRes.rows[0];
+                record = {
+                    otp: row.otp,
+                    expires: parseInt(row.expires_at, 10),
+                    type: row.type,
+                    registrationData: row.registration_data,
+                    userData: row.user_data
+                };
+                otpStore.set(cleanEmail, record);
+            }
+        } catch (err) {
+            console.error('[authService] Failed to query OTP from database:', err.message);
+        }
+    }
+    return record;
+};
+
+const deleteOtpRecord = async (cleanEmail) => {
+    otpStore.delete(cleanEmail);
+    try {
+        await pool.query(`DELETE FROM verification_otps WHERE LOWER(email) = $1`, [cleanEmail]);
+    } catch (err) {
+        console.error('[authService] Failed to delete OTP from database:', err.message);
+    }
+};
+
 // --- USER AUTH ---
 
 exports.registerUser = async (data) => {
     const { email, password, fullName, phone } = data;
+    if (!email) throw new Error("Email is required");
+    const cleanEmail = email.toString().trim().toLowerCase();
 
     let cleanPhone = phone ? phone.toString().trim().replace(/\D/g, '') : '';
     if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
@@ -32,7 +98,7 @@ exports.registerUser = async (data) => {
     }
 
     // Check if user already exists
-    const existingUser = await pool.query("SELECT * FROM public.users WHERE emailid = $1 OR username = $1", [email]);
+    const existingUser = await pool.query("SELECT * FROM public.users WHERE LOWER(emailid) = $1 OR LOWER(username) = $1", [cleanEmail]);
     if (existingUser.rows.length > 0) {
         throw new Error("Email already registered");
     }
@@ -42,31 +108,34 @@ exports.registerUser = async (data) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     const otp = generateOTP();
-    console.log(`[2FA] Registration OTP for ${email}: ${otp}`);
+    console.log(`[2FA] Registration OTP for ${cleanEmail}: ${otp}`);
 
-    // Store registration data in otpStore
-    otpStore.set(email, {
+    // Store registration data in persistent storage
+    await saveOtpRecord(cleanEmail, {
         otp,
         expires: Date.now() + 10 * 60 * 1000,
         type: 'registration',
         registrationData: {
-            email,
+            email: cleanEmail,
             password: hashedPassword,
-            fullName,
+            fullName: (fullName || '').toString().trim(),
             phone: cleanPhone
         }
     });
 
     return {
         requiresVerification: true,
-        email,
+        email: cleanEmail,
         otp
     };
 };
 
 exports.loginUser = async (email, password) => {
-    // Try both username and emailid just in case
-    const result = await pool.query("SELECT * FROM public.users WHERE emailid = $1 OR username = $1", [email]);
+    if (!email) throw new Error("Email is required");
+    const cleanEmail = email.toString().trim().toLowerCase();
+
+    // Try both username and emailid case-insensitively
+    const result = await pool.query("SELECT * FROM public.users WHERE LOWER(emailid) = $1 OR LOWER(username) = $1", [cleanEmail]);
     const user = result.rows[0];
 
     if (!user || !(await bcrypt.compare(password, user.password))) {
@@ -77,10 +146,11 @@ exports.loginUser = async (email, password) => {
         const otp = generateOTP();
         console.log(`[2FA] OTP for ${user.emailid}: ${otp}`);
 
-        // Store OTP with expiration (5 minutes)
-        otpStore.set(user.emailid, {
+        // Store OTP with expiration (10 minutes)
+        await saveOtpRecord(cleanEmail, {
             otp,
-            expires: Date.now() + 5 * 60 * 1000,
+            expires: Date.now() + 10 * 60 * 1000,
+            type: 'login',
             userData: {
                 id: user.username,
                 userid: user.username,
@@ -94,7 +164,7 @@ exports.loginUser = async (email, password) => {
         return {
             requires2FA: true,
             userId: user.username,
-            email: user.emailid,
+            email: cleanEmail,
             otp: otp // Sending OTP to frontend for EmailJS integration
         };
     }
@@ -118,24 +188,30 @@ exports.loginUser = async (email, password) => {
 };
 
 exports.verifyOtp = async (email, otp) => {
-    console.log(`[verifyOtp Service] Checking OTP for email: ${email}`);
-    const record = otpStore.get(email);
+    if (!email || !otp) {
+        throw new Error("Email and OTP are required");
+    }
+    const cleanEmail = email.toString().trim().toLowerCase();
+    const cleanOtp = otp.toString().trim();
+
+    console.log(`[verifyOtp Service] Checking OTP for email: ${cleanEmail}`);
+    const record = await getOtpRecord(cleanEmail);
 
     if (!record) {
-        console.error(`[verifyOtp Service] No OTP record found for email: ${email}`);
-        throw new Error("OTP not requested or already used");
+        console.error(`[verifyOtp Service] No OTP record found for email: ${cleanEmail}`);
+        throw new Error("OTP not requested or already used. Please request a new one.");
     }
 
     // Check expiration
     if (Date.now() > record.expires) {
-        console.error(`[verifyOtp Service] OTP expired for email: ${email}`);
-        otpStore.delete(email);
+        console.error(`[verifyOtp Service] OTP expired for email: ${cleanEmail}`);
+        await deleteOtpRecord(cleanEmail);
         throw new Error("OTP has expired. Please request a new one");
     }
 
-    console.log(`[verifyOtp Service] Comparing OTPs - Provided: ${otp}, Stored: ${record.otp}`);
-    if (record.otp !== otp) {
-        console.error(`[verifyOtp Service] Invalid OTP for email: ${email}`);
+    console.log(`[verifyOtp Service] Comparing OTPs - Provided: ${cleanOtp}, Stored: ${record.otp}`);
+    if (record.otp !== cleanOtp) {
+        console.error(`[verifyOtp Service] Invalid OTP for email: ${cleanEmail}`);
         throw new Error("Invalid verification code");
     }
 
@@ -143,7 +219,7 @@ exports.verifyOtp = async (email, otp) => {
     let token;
 
     if (record.type === 'registration') {
-        console.log(`[verifyOtp Service] Processing registration for email: ${email}`);
+        console.log(`[verifyOtp Service] Processing registration for email: ${cleanEmail}`);
         const { email: userEmail, password, fullName, phone } = record.registrationData;
 
         const username = userEmail;
@@ -165,10 +241,9 @@ exports.verifyOtp = async (email, otp) => {
         };
         token = generateToken(newUser.username, 'user');
     } else {
-        console.log(`[verifyOtp Service] Processing login verification for email: ${email}`);
+        console.log(`[verifyOtp Service] Processing login verification for email: ${cleanEmail}`);
         // Login verification
         user = record.userData;
-        // Include memberSince, fullname, avatar, and contactno for login as well
         const loginId = user.id || user.userid;
         const loginResult = await pool.query("SELECT member_since, fullname, avatar_url, contactno FROM public.users WHERE username = $1", [loginId]);
         user.memberSince = loginResult.rows[0]?.member_since;
@@ -179,8 +254,8 @@ exports.verifyOtp = async (email, otp) => {
     }
 
     // Clear OTP after success
-    otpStore.delete(email);
-    console.log(`[verifyOtp Service] Successfully verified OTP for email: ${email}`);
+    await deleteOtpRecord(cleanEmail);
+    console.log(`[verifyOtp Service] Successfully verified OTP for email: ${cleanEmail}`);
 
     return {
         user,
@@ -189,29 +264,28 @@ exports.verifyOtp = async (email, otp) => {
 };
 
 exports.resendOtp = async (email) => {
-    console.log(`[resendOtp Service] Resending OTP for email: ${email}`);
+    if (!email) throw new Error("Email is required");
+    const cleanEmail = email.toString().trim().toLowerCase();
+    console.log(`[resendOtp Service] Resending OTP for email: ${cleanEmail}`);
     
     // Check if there is an existing record to resend for
-    const existingRecord = otpStore.get(email);
+    const existingRecord = await getOtpRecord(cleanEmail);
     
     const otp = generateOTP();
-    console.log(`[resendOtp Service] New OTP for ${email}: ${otp}`);
+    console.log(`[resendOtp Service] New OTP for ${cleanEmail}: ${otp}`);
 
     if (existingRecord) {
-        // Update existing record with new OTP and refreshed expiry
+        // Update existing record with new OTP and refreshed expiry (10 minutes)
         existingRecord.otp = otp;
-        existingRecord.expires = Date.now() + 5 * 60 * 1000;
-        otpStore.set(email, existingRecord);
+        existingRecord.expires = Date.now() + 10 * 60 * 1000;
+        await saveOtpRecord(cleanEmail, existingRecord);
     } else {
-        // If no record exists, we might need to look up the user to allow "resend" to work as "send"
-        // But usually resend implies they just tried to login/register.
-        // For security, we only resend if a session was recently initiated.
-        throw new Error("No active verification session found. Please try logging in again.");
+        throw new Error("No active verification session found. Please try registering or logging in again.");
     }
 
     return {
         success: true,
-        email,
+        email: cleanEmail,
         otp
     };
 };

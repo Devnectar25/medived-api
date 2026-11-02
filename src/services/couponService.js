@@ -12,7 +12,8 @@ exports.createCoupon = async (data) => {
 
     // ── Validate discount_type ─────────────────────────────────────────────────
     const allowedTypes = ['percentage', 'fixed', 'bogo'];
-    if (!discount_type || !allowedTypes.includes(discount_type)) {
+    const normType = (discount_type || '').toString().trim().toLowerCase();
+    if (!normType || !allowedTypes.includes(normType)) {
         throw new Error(`discount_type must be one of: ${allowedTypes.join(', ')}`);
     }
 
@@ -24,7 +25,7 @@ exports.createCoupon = async (data) => {
     if (parsedValue < 0) {
         throw new Error('discount_value cannot be negative');
     }
-    if (discount_type === 'percentage' && parsedValue > 100) {
+    if (normType === 'percentage' && parsedValue > 100) {
         throw new Error('Percentage discount cannot exceed 100%');
     }
 
@@ -77,7 +78,7 @@ exports.createCoupon = async (data) => {
             RETURNING *`,
             [
                 finalCode,
-                discount_type,
+                normType,
                 parsedValue,
                 parseFloat(min_order_value) || 0,
                 parseInt(usage_limit) || 1,
@@ -134,6 +135,33 @@ exports.updateCoupon = async (id, data) => {
         if (existingRes.rows.length === 0) throw new Error('Coupon not found');
         const existing = existingRes.rows[0];
 
+        const allowedTypes = ['percentage', 'fixed', 'bogo'];
+        const normDiscountType = discount_type ? discount_type.toString().trim().toLowerCase() : undefined;
+        if (normDiscountType !== undefined && !allowedTypes.includes(normDiscountType)) {
+            throw new Error(`discount_type must be one of: ${allowedTypes.join(', ')}`);
+        }
+
+        const effectiveType = (normDiscountType || existing.discount_type || 'percentage').toLowerCase();
+        let effectiveValue = discount_value !== undefined && discount_value !== null && discount_value !== ''
+            ? parseFloat(discount_value)
+            : parseFloat(existing.discount_value);
+
+        if (discount_value !== undefined && discount_value !== null && discount_value !== '') {
+            if (isNaN(effectiveValue) || effectiveValue < 0) {
+                throw new Error('discount_value must be a non-negative number');
+            }
+        }
+
+        if (effectiveType === 'percentage') {
+            if (discount_value !== undefined && discount_value !== null && discount_value !== '') {
+                if (effectiveValue > 100) {
+                    throw new Error('Percentage discount cannot exceed 100%');
+                }
+            } else if (effectiveValue > 100) {
+                effectiveValue = 100;
+            }
+        }
+
         const finalScope = apply_to || existing.apply_to;
         const mainCatId = (Array.isArray(category_ids) && category_ids.length > 0) ? category_ids[0] : (finalScope === 'category' ? existing.category_id : null);
         const mainBrandId = (Array.isArray(brand_ids) && brand_ids.length > 0) ? brand_ids[0] : (finalScope === 'brand' ? existing.brand_id : null);
@@ -143,7 +171,7 @@ exports.updateCoupon = async (id, data) => {
         await client.query(
             `UPDATE coupons SET
                 discount_type = COALESCE($2, discount_type),
-                discount_value = COALESCE($3, discount_value),
+                discount_value = $3,
                 min_order_value = COALESCE($4, min_order_value),
                 usage_limit = COALESCE($5, usage_limit),
                 expiry_date = COALESCE($6, expiry_date),
@@ -155,7 +183,7 @@ exports.updateCoupon = async (id, data) => {
                 active = COALESCE($12, active)
             WHERE id = $1`,
             [
-                id, discount_type, discount_value, min_order_value, usage_limit,
+                id, normDiscountType, effectiveValue, min_order_value, usage_limit,
                 expiry_date, finalScope, mainCatId, mainBrandId, mainProdId,
                 is_restricted, active
             ]
@@ -208,12 +236,28 @@ exports.getAllCoupons = async () => {
         LEFT JOIN coupon_assignments ca
             ON ca.coupon_id = c.id
         LEFT JOIN orders o
-            ON o.coupon_code = c.code
+            ON o.coupon_code = c.code AND (o.status IS NULL OR o.status NOT IN ('Cancelled', 'CANCEL_APPROVED'))
         GROUP BY c.id
         ORDER BY c.created_at DESC
     `);
 
-    return result.rows;
+    return result.rows.map(c => {
+        const dType = (c.discount_type || 'percentage').toLowerCase();
+        let dVal = parseFloat(c.discount_value);
+        if (dType === 'percentage' && dVal > 100) {
+            dVal = 100;
+        }
+        const usedCount = (c.used_count !== null && c.used_count !== undefined) 
+            ? parseInt(c.used_count, 10) 
+            : parseInt(c.times_used, 10);
+        return {
+            ...c,
+            discount_type: dType,
+            discount_value: isNaN(dVal) ? c.discount_value : dVal,
+            used_count: usedCount,
+            times_used: usedCount
+        };
+    });
 };
 
 /**
@@ -278,8 +322,18 @@ exports.validateCoupon = async (code, orderTotal, cartItems = [], userId = null)
             throw new Error(`Minimum order value of ₹${parseFloat(coupon.min_order_value).toFixed(2)} required`);
         }
 
-        const usageResult = await client.query('SELECT COUNT(*) AS count FROM orders WHERE coupon_code = $1', [normalizedCode]);
-        if (parseInt(usageResult.rows[0].count, 10) >= parseInt(coupon.usage_limit, 10)) {
+        const usageResult = await client.query(
+            `SELECT COUNT(*) AS count FROM orders 
+             WHERE coupon_code = $1 
+               AND (status IS NULL OR status NOT IN ('Cancelled', 'CANCEL_APPROVED'))`,
+            [normalizedCode]
+        );
+        const orderActiveCount = parseInt(usageResult.rows[0].count, 10);
+        const effectiveUsedCount = (coupon.used_count !== null && coupon.used_count !== undefined)
+            ? parseInt(coupon.used_count, 10)
+            : orderActiveCount;
+
+        if (effectiveUsedCount >= parseInt(coupon.usage_limit, 10)) {
             throw new Error('This coupon has reached its usage limit');
         }
 
@@ -331,11 +385,15 @@ exports.validateCoupon = async (code, orderTotal, cartItems = [], userId = null)
         let bogoItemId = null;
         let bogoItemName = null;
 
-        if (coupon.discount_type === 'percentage') {
-            discountAmount = (applicableTotal * parseFloat(coupon.discount_value)) / 100;
-        } else if (coupon.discount_type === 'fixed') {
-            discountAmount = Math.min(parseFloat(coupon.discount_value), applicableTotal);
-        } else if (coupon.discount_type === 'bogo') {
+        const dType = (coupon.discount_type || '').toLowerCase();
+        const dValue = parseFloat(coupon.discount_value) || 0;
+
+        if (dType === 'percentage') {
+            const validPct = Math.min(100, Math.max(0, dValue));
+            discountAmount = (applicableTotal * validPct) / 100;
+        } else if (dType === 'fixed') {
+            discountAmount = Math.min(dValue, applicableTotal);
+        } else if (dType === 'bogo') {
             // HOM-128: Refined BOGO logic - Buy 1 (or more), Get 1 Free
             // The discount only triggers if an eligible item has quantity >= 2.
             // The discount is exactly ONE unit price of that item.
@@ -376,8 +434,8 @@ exports.validateCoupon = async (code, orderTotal, cartItems = [], userId = null)
             coupon: {
                 id: coupon.id,
                 code: coupon.code,
-                discount_type: coupon.discount_type,
-                discount_value: coupon.discount_value,
+                discount_type: dType,
+                discount_value: dType === 'percentage' ? Math.min(100, Math.max(0, dValue)) : dValue,
                 apply_to: coupon.apply_to,
                 category_ids: coupon.category_ids,
                 brand_ids: coupon.brand_ids,
@@ -419,7 +477,18 @@ exports.getUserCoupons = async (userId) => {
          ORDER BY c.created_at DESC`,
         [userId]
     );
-    return result.rows;
+    return result.rows.map(c => {
+        const dType = (c.discount_type || 'percentage').toLowerCase();
+        let dVal = parseFloat(c.discount_value);
+        if (dType === 'percentage' && dVal > 100) {
+            dVal = 100;
+        }
+        return {
+            ...c,
+            discount_type: dType,
+            discount_value: isNaN(dVal) ? c.discount_value : dVal
+        };
+    });
 };
 
 exports.getCouponAssignments = async (couponId) => {
@@ -441,8 +510,69 @@ exports.getUsedUsers = async (couponId) => {
     if (couponRes.rows.length === 0) return [];
     const code = couponRes.rows[0].code;
     const result = await pool.query(
-        `SELECT u.username, u.emailid as email, o.created_at as order_date FROM orders o JOIN users u ON u.username = o.user_id WHERE o.coupon_code = $1 ORDER BY o.created_at DESC`,
+        `SELECT u.username, u.emailid as email, o.created_at as order_date 
+         FROM orders o 
+         JOIN users u ON u.username = o.user_id 
+         WHERE o.coupon_code = $1 
+           AND (o.status IS NULL OR o.status NOT IN ('Cancelled', 'CANCEL_APPROVED'))
+         ORDER BY o.created_at DESC`,
         [code]
     );
     return result.rows;
+};
+
+/**
+ * Consume a coupon usage (increment used_count and mark assignment as used)
+ */
+exports.consumeCouponUsage = async (dbClient, couponCode, couponId, userId) => {
+    if (!couponCode) return;
+    const normalizedCode = couponCode.trim().toUpperCase();
+
+    // 1. Increment used_count on coupons table
+    await dbClient.query(
+        `UPDATE coupons 
+         SET used_count = COALESCE(used_count, 0) + 1 
+         WHERE code = $1`,
+        [normalizedCode]
+    );
+
+    // 2. Mark coupon assignment as used if restricted/assigned to this user
+    if (userId) {
+        await dbClient.query(
+            `UPDATE coupon_assignments
+             SET status = 'used', used_at = CURRENT_TIMESTAMP
+             WHERE coupon_id = (SELECT id FROM coupons WHERE code = $1)
+               AND user_id = $2
+               AND status = 'assigned'`,
+            [normalizedCode, userId]
+        );
+    }
+};
+
+/**
+ * Restore a coupon usage (decrement used_count and restore assignment status to 'assigned')
+ */
+exports.restoreCouponUsage = async (dbClient, couponCode, couponId, userId) => {
+    if (!couponCode) return;
+    const normalizedCode = couponCode.trim().toUpperCase();
+
+    // 1. Decrement used_count on coupons table (never drop below 0)
+    await dbClient.query(
+        `UPDATE coupons 
+         SET used_count = GREATEST(0, COALESCE(used_count, 0) - 1) 
+         WHERE code = $1`,
+        [normalizedCode]
+    );
+
+    // 2. Restore assignment back to 'assigned' if it was marked as used
+    if (userId) {
+        await dbClient.query(
+            `UPDATE coupon_assignments
+             SET status = 'assigned', used_at = NULL
+             WHERE coupon_id = (SELECT id FROM coupons WHERE code = $1)
+               AND user_id = $2
+               AND status = 'used'`,
+            [normalizedCode, userId]
+        );
+    }
 };

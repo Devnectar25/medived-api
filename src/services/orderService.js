@@ -111,6 +111,42 @@ exports.createOrder = async (orderData) => {
         );
         console.log(`[OrderService] DB Subtotal computed: ${dbSubtotal}`);
 
+        // ── SECURITY & STOCK VALIDATION (HOM-MAX-QTY & COD PROTECTION) ────────
+        const MAX_ITEM_QUANTITY = 10;
+        const MAX_COD_TOTAL = 10000;
+        const MAX_COD_ITEMS = 20;
+
+        if (!items || !Array.isArray(items) || items.length === 0) {
+            throw new Error('Order must contain at least one item');
+        }
+
+        let totalOrderUnits = 0;
+        for (const item of items) {
+            const qty = parseInt(item.quantity, 10);
+            const prodId = parseInt(item.id || item.productId, 10);
+            if (isNaN(qty) || qty <= 0) {
+                throw new Error(`Invalid quantity for item ${item.name || prodId}`);
+            }
+            if (qty > MAX_ITEM_QUANTITY) {
+                throw new Error(`Maximum purchase limit is ${MAX_ITEM_QUANTITY} units per product. Item '${item.name || prodId}' requested ${qty} units.`);
+            }
+            totalOrderUnits += qty;
+
+            // Atomic stock availability check with row lock
+            const prodStockRes = await client.query(
+                `SELECT product_id, productname, stock_quantity, instock FROM products WHERE product_id = $1 FOR UPDATE`,
+                [prodId]
+            );
+            if (prodStockRes.rows.length === 0) {
+                throw new Error(`Product '${item.name || prodId}' not found.`);
+            }
+            const productRow = prodStockRes.rows[0];
+            const currentStock = parseInt(productRow.stock_quantity, 10) || 0;
+            if (currentStock < qty || !productRow.instock) {
+                throw new Error(`Insufficient stock for '${productRow.productname}'. Requested: ${qty}, Available: ${currentStock}.`);
+            }
+        }
+
         // ── STEP 1: Coupon validation (server-side, inside transaction) ────────
         // We never trust the client's `total`. We always recompute here.
         let discountAmount = 0;
@@ -137,6 +173,16 @@ exports.createOrder = async (orderData) => {
             finalTotal = originalTotal - discountAmount;   // originalTotal already = dbSubtotal + shipping
 
             if (finalTotal < 0) finalTotal = 0;
+        }
+
+        // Validate Cash on Delivery (COD) limits to prevent inventory exhaustion
+        if (paymentMethod === 'cod') {
+            if (totalOrderUnits > MAX_COD_ITEMS) {
+                throw new Error(`Cash on Delivery is limited to a maximum of ${MAX_COD_ITEMS} total units per order. Please choose an online payment method for bulk orders.`);
+            }
+            if (finalTotal > MAX_COD_TOTAL) {
+                throw new Error(`Cash on Delivery is available only for orders up to ₹${MAX_COD_TOTAL}. Please choose an online payment method.`);
+            }
         }
 
         // ── STEP 2: Insert order with coupon fields & approval mode ───────────
@@ -176,19 +222,9 @@ exports.createOrder = async (orderData) => {
         const order = orderResult.rows[0];
         console.log(`[OrderService] Order inserted successfully: ID ${order.id}`);
 
-        // ── STEP 3: Mark coupon assignment as used ─────────────────────────────
-        // Only runs if a valid coupon was applied. Silently skips if the coupon
-        // was global (no assignment row exists) — that is expected and correct.
+        // ── STEP 3: Consume coupon usage & assignment ──────────────────────────
         if (validatedCouponCode) {
-            await client.query(
-                `UPDATE coupon_assignments
-                 SET status  = 'used',
-                     used_at = NOW()
-                 WHERE coupon_id = (SELECT id FROM coupons WHERE code = $1)
-                   AND user_id   = $2
-                   AND status    = 'assigned'`,
-                [validatedCouponCode, userId]
-            );
+            await couponService.consumeCouponUsage(client, validatedCouponCode, couponId, userId);
         }
 
         // ── STEP 4: Insert order items + update stock ──────────────────────────
@@ -583,7 +619,7 @@ exports.getOrderById = async (orderId) => {
          FROM orders o
          LEFT JOIN user_addresses a ON o.address_id = a.id
          LEFT JOIN users u ON o.user_id = u.username
-         WHERE o.id = $1`,
+         WHERE o.id::text = $1 OR o.order_number = $1`,
         [orderId]
     );
 
@@ -1002,6 +1038,12 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         cancelledBy || null
                     ]
                 );
+
+                // Restore coupon usage limit & assignment if order used a coupon
+                if (oldOrder.coupon_code && oldStatus !== 'Cancelled') {
+                    await couponService.restoreCouponUsage(client, oldOrder.coupon_code, oldOrder.coupon_id, oldOrder.user_id);
+                }
+
                 await client.query('COMMIT');
                 return await exports.getOrderById(orderId);
             } else {
@@ -1582,6 +1624,18 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                     `UPDATE order_items SET status = 'Cancelled' WHERE order_id = $1 AND (status IS NULL OR (status != 'Cancelled' AND status != 'Returned' AND status != 'Refunded'))`,
                     [orderId]
                 );
+
+                // Restore coupon usage limit & assignment if order used a coupon
+                if (oldOrder.coupon_code) {
+                    await couponService.restoreCouponUsage(client, oldOrder.coupon_code, oldOrder.coupon_id, oldOrder.user_id);
+                }
+            }
+        }
+
+        // If order was previously Cancelled and is being un-cancelled, re-consume coupon
+        if (oldOrder.status === 'Cancelled' && status !== 'Cancelled' && status !== 'CANCEL_REQUESTED' && status !== 'Cancellation Requested') {
+            if (oldOrder.coupon_code) {
+                await couponService.consumeCouponUsage(client, oldOrder.coupon_code, oldOrder.coupon_id, oldOrder.user_id);
             }
         }
 
