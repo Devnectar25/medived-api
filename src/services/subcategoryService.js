@@ -10,26 +10,107 @@ const mapSubcategory = (s) => ({
     createdate: s.createdate
 });
 
-exports.getAllSubcategories = async (page, limit) => {
-    if (page && limit) {
-        const offset = (page - 1) * limit;
-        const countResult = await pool.query("SELECT COUNT(*) FROM subcategory");
-        const total = parseInt(countResult.rows[0].count);
+exports.getAllSubcategories = async (optionsOrPage, maybeLimit, maybeCategory, maybeSearch, maybeSortBy, maybeSortOrder, maybeActive) => {
+    let page, limit, category_id, search, sortBy, sortOrder, active;
+    if (optionsOrPage && typeof optionsOrPage === 'object') {
+        page = optionsOrPage.page;
+        limit = optionsOrPage.limit;
+        category_id = optionsOrPage.category_id;
+        search = optionsOrPage.search;
+        sortBy = optionsOrPage.sortBy;
+        sortOrder = optionsOrPage.sortOrder;
+        active = optionsOrPage.active;
+    } else {
+        page = optionsOrPage;
+        limit = maybeLimit;
+        category_id = maybeCategory;
+        search = maybeSearch;
+        sortBy = maybeSortBy;
+        sortOrder = maybeSortOrder;
+        active = maybeActive;
+    }
 
-        const result = await pool.query(`
+    let whereClauses = [];
+    let params = [];
+    let paramIdx = 1;
+
+    // Filter by parent category_id
+    if (category_id && category_id !== 'all' && !isNaN(parseInt(category_id))) {
+        whereClauses.push(`s.category_id = $${paramIdx}`);
+        params.push(parseInt(category_id));
+        paramIdx++;
+    }
+
+    // Filter by search query (name, description, or parent category name)
+    if (search && typeof search === 'string' && search.trim()) {
+        const term = `%${search.trim()}%`;
+        whereClauses.push(`(s.name ILIKE $${paramIdx} OR COALESCE(s.description, '') ILIKE $${paramIdx} OR c.name ILIKE $${paramIdx})`);
+        params.push(term);
+        paramIdx++;
+    }
+
+    // Filter by active status
+    if (active !== undefined && active !== null && active !== '' && active !== 'all') {
+        const isActive = active === true || active === 'true' || active === 1 || active === '1';
+        whereClauses.push(`s.active = $${paramIdx}`);
+        params.push(isActive);
+        paramIdx++;
+    }
+
+    const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+    // Determine sorting
+    const allowedSortFields = {
+        name: 'LOWER(s.name)',
+        category_name: 'LOWER(c.name)',
+        createdate: 's.createdate',
+        srno: 's.srno',
+        active: 's.active'
+    };
+
+    const sortField = allowedSortFields[sortBy] || 's.srno';
+    const direction = (sortOrder && String(sortOrder).toLowerCase() === 'desc') ? 'DESC' : 'ASC';
+
+    let orderClause = `ORDER BY ${sortField} ${direction}`;
+    if (sortBy === 'active') {
+        orderClause = `ORDER BY s.active ${direction}, LOWER(s.name) ASC`;
+    } else if (sortBy === 'name') {
+        orderClause = `ORDER BY LOWER(s.name) ${direction}, s.srno ASC`;
+    } else if (sortBy === 'category_name') {
+        orderClause = `ORDER BY LOWER(c.name) ${direction}, LOWER(s.name) ASC`;
+    }
+
+    if (page && limit) {
+        const parsedPage = Math.max(1, parseInt(page) || 1);
+        const parsedLimit = Math.max(1, parseInt(limit) || 10);
+        const offset = (parsedPage - 1) * parsedLimit;
+
+        const countQuery = `
+            SELECT COUNT(*) 
+            FROM subcategory s 
+            LEFT JOIN category c ON s.category_id = c.category_id 
+            ${whereString}
+        `;
+        const countResult = await pool.query(countQuery, params);
+        const total = parseInt(countResult.rows[0]?.count || 0);
+
+        const dataParams = [...params, parsedLimit, offset];
+        const dataQuery = `
             SELECT s.*, c.name as category_name 
             FROM subcategory s 
             LEFT JOIN category c ON s.category_id = c.category_id 
-            ORDER BY s.srno ASC 
-            LIMIT $1 OFFSET $2
-        `, [limit, offset]);
+            ${whereString} 
+            ${orderClause} 
+            LIMIT $${paramIdx} OFFSET $${paramIdx + 1}
+        `;
+        const dataResult = await pool.query(dataQuery, dataParams);
 
         return {
-            data: result.rows.map(mapSubcategory),
+            data: dataResult.rows.map(mapSubcategory),
             total,
-            page: parseInt(page),
-            limit: parseInt(limit),
-            totalPages: Math.ceil(total / limit)
+            page: parsedPage,
+            limit: parsedLimit,
+            totalPages: Math.ceil(total / parsedLimit) || 1
         };
     }
 
@@ -37,8 +118,9 @@ exports.getAllSubcategories = async (page, limit) => {
         SELECT s.*, c.name as category_name 
         FROM subcategory s 
         LEFT JOIN category c ON s.category_id = c.category_id 
-        ORDER BY s.srno ASC
-    `);
+        ${whereString} 
+        ${orderClause}
+    `, params);
     return result.rows.map(mapSubcategory);
 };
 

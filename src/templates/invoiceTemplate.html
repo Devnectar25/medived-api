@@ -22,10 +22,16 @@
         th { text-align: left; font-size: 11px; color: #7f8c8d; border-bottom: 1px solid #dfe6e9; padding: 10px 0; }
         td { padding: 12px 0; border-bottom: 1px solid #f1f2f6; font-size: 13px; }
         .text-right { text-align: right; }
+        .item-cancelled { color: #8395a7; }
+        .item-cancelled .amount { text-decoration: line-through; }
+        .item-returned { color: #8395a7; }
+        .item-returned .amount { text-decoration: line-through; }
+        .badge-cancelled { display: inline-block; font-size: 10px; font-weight: 700; color: #d63031; background: #ffeaa7; padding: 2px 6px; border-radius: 4px; margin-left: 6px; text-decoration: none; vertical-align: middle; }
+        .badge-returned { display: inline-block; font-size: 10px; font-weight: 700; color: #e67e22; background: #fdebd0; padding: 2px 6px; border-radius: 4px; margin-left: 6px; text-decoration: none; vertical-align: middle; }
 
         /* Totals */
         .summary-container { display: flex; justify-content: flex-end; margin-top: 30px; }
-        .summary-table { width: 220px; font-size: 13px; }
+        .summary-table { width: 270px; font-size: 13px; }
         .grand-total { font-size: 16px; font-weight: bold; color: #26B5AD; }
 
         /* Footer */
@@ -71,16 +77,34 @@
                     <th>Description</th>
                     <th class="text-right">Unit Cost</th>
                     <th class="text-right">Qty</th>
+                    <th class="text-right">Status</th>
                     <th class="text-right">Amount</th>
                 </tr>
             </thead>
             <tbody>
                 {{#each items}}
-                <tr>
-                    <td>{{this.name}}</td>
+                <tr class="{{#if this.isCancelled}}item-cancelled{{else if this.isReturned}}item-returned{{/if}}">
+                    <td>
+                        {{this.name}}
+                        {{#if this.isCancelled}}
+                        <span class="badge-cancelled">CANCELLED</span>
+                        {{/if}}
+                        {{#if this.isReturned}}
+                        <span class="badge-returned">RETURNED</span>
+                        {{/if}}
+                    </td>
                     <td class="text-right">{{currencySymbol}}{{this.price}}</td>
                     <td class="text-right">{{this.quantity}}</td>
-                    <td class="text-right">{{currencySymbol}}{{this.total}}</td>
+                    <td class="text-right">
+                        {{#if this.isCancelled}}
+                        <span style="color: #d63031; font-weight: 600; font-size: 11px;">Cancelled</span>
+                        {{else if this.isReturned}}
+                        <span style="color: #e67e22; font-weight: 600; font-size: 11px;">Returned</span>
+                        {{else}}
+                        <span style="color: #10ac84; font-weight: 600; font-size: 11px;">Delivered</span>
+                        {{/if}}
+                    </td>
+                    <td class="text-right amount">{{currencySymbol}}{{this.total}}</td>
                 </tr>
                 {{/each}}
             </tbody>
@@ -88,7 +112,27 @@
 
         <div class="summary-container">
             <table class="summary-table">
+                {{#if hasAdjustments}}
+                <tr><td>Original Subtotal</td><td class="text-right">{{currencySymbol}}{{originalSubtotal}}</td></tr>
+                {{#if hasCancellationAdjustment}}
+                <tr style="color: #d63031;">
+                    <td><strong>Cancellation Refund</strong></td>
+                    <td class="text-right">-{{currencySymbol}}{{cancellationAdjustment}}</td>
+                </tr>
+                {{/if}}
+                {{#if hasReturnAdjustment}}
+                <tr style="color: #e67e22;">
+                    <td><strong>Return Refund</strong></td>
+                    <td class="text-right">-{{currencySymbol}}{{returnAdjustment}}</td>
+                </tr>
+                {{/if}}
+                <tr style="font-weight: 600; border-top: 1px dashed #dfe6e9;">
+                    <td>Net Subtotal</td>
+                    <td class="text-right">{{currencySymbol}}{{subtotal}}</td>
+                </tr>
+                {{else}}
                 <tr><td>Subtotal</td><td class="text-right">{{currencySymbol}}{{subtotal}}</td></tr>
+                {{/if}}
                 {{#if hasDiscount}}
                 <tr style="color: #26B5AD;">
                     <td>
@@ -99,7 +143,15 @@
                 </tr>
                 {{/if}}
                 <tr><td>Shipping</td><td class="text-right">{{currencySymbol}}{{shippingFee}}</td></tr>
-                <tr><td>Tax ({{taxRate}}%)</td><td class="text-right">{{currencySymbol}}{{taxAmount}}</td></tr>
+                {{#if hasTax}}
+                <tr><td>Tax (GST {{taxRate}}%)</td><td class="text-right">{{currencySymbol}}{{taxAmount}}</td></tr>
+                {{/if}}
+                {{#if hasCardSurcharge}}
+                <tr><td>Card Convenience Fee ({{cardSurchargeRate}}%)</td><td class="text-right">{{currencySymbol}}{{cardSurchargeAmount}}</td></tr>
+                {{/if}}
+                {{#if hasCodCharge}}
+                <tr><td>Cash on Delivery Fee</td><td class="text-right">{{currencySymbol}}{{codChargeAmount}}</td></tr>
+                {{/if}}
                 <tr class="grand-total"><td>Total Amount</td><td class="text-right">{{currencySymbol}}{{grandTotal}}</td></tr>
             </table>
         </div>

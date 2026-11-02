@@ -2,12 +2,12 @@ const subcategoryService = require('../services/subcategoryService');
 
 exports.getSubcategories = async (req, res) => {
     try {
-        const { page, limit, category_id } = req.query;
+        const { page, limit, category_id, search, sortBy, sortOrder, active } = req.query;
         let data;
-        if (category_id) {
+        if (category_id && !page && !limit && !search && !sortBy) {
             data = await subcategoryService.getSubcategoriesBycategory_id(parseInt(category_id));
         } else {
-            data = await subcategoryService.getAllSubcategories(page, limit);
+            data = await subcategoryService.getAllSubcategories({ page, limit, category_id, search, sortBy, sortOrder, active });
         }
         res.json({ success: true, data });
     } catch (error) {

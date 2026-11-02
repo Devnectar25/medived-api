@@ -38,6 +38,12 @@ router.get('/:id', productController.getProduct);
 // GET /api/products/:id/related
 router.get('/:id/related', productController.getRelatedProducts);
 
+// POST /api/products/bulk-status
+router.post('/bulk-status', productController.bulkUpdateProductStatus);
+
+// POST /api/products/bulk-delete
+router.post('/bulk-delete', productController.bulkDeleteProducts);
+
 // POST /api/products
 router.post('/', productController.createProduct);
 

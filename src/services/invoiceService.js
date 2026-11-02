@@ -5,6 +5,7 @@ const handlebars = require('handlebars');
 const puppeteer = require('puppeteer-core');
 const chromium = require('@sparticuz/chromium');
 const orderService = require('./orderService');
+const settingsService = require('./settingsService');
 const pool = require('../config/db');
 
 /**
@@ -30,16 +31,49 @@ const getCurrencySymbol = () => {
  *  - replacement shipments (-REP orders) with status "Delivered"
  *  - legacy in-order replacements that reached the customer ("Replaced" / "Replacement Delivered")
  */
-const INVOICE_ELIGIBLE_STATUSES = ['Delivered', 'Replaced', 'Replacement Delivered'];
-const KEPT_ITEM_STATUSES = ['Delivered', 'Replaced', 'Replacement Delivered'];
+const INVOICE_ELIGIBLE_STATUSES = ['Delivered', 'Replaced', 'Replacement Delivered', 'Return Rejected', 'Replace Rejected'];
+
+const isItemCancelled = (item) => {
+    if (!item) return false;
+    const status = typeof item === 'string' ? item : (item.status || '');
+    const s = String(status).trim().toLowerCase();
+    if (s.includes('reject') || s.includes('denied')) return false;
+    if (s.includes('cancel')) return true;
+    if (typeof item === 'object' && item.cancel_reason && item.cancel_reason !== 'Not specified' && item.cancel_reason.trim() !== '') {
+        return true;
+    }
+    return false;
+};
+
+const isItemReturned = (item) => {
+    if (!item) return false;
+    const status = typeof item === 'string' ? item : (item.status || '');
+    const s = String(status).trim().toLowerCase();
+    if (s.includes('reject') || s.includes('denied')) return false;
+    return s.includes('return') ||
+           s.includes('refund') ||
+           s === 'received at homved' ||
+           s === 'restocked';
+};
+
+const isItemReturnedOrCancelled = (item) => {
+    return isItemCancelled(item) || isItemReturned(item);
+};
 exports.isInvoiceEligible = (order) => {
     if (!order) return false;
-    if (INVOICE_ELIGIBLE_STATUSES.includes(order.status)) return true;
-    // Multi-item orders: the order status may have moved on (e.g. one item being returned) while
-    // other delivered items stay with the customer. Those kept items still need an invoice.
     let items = order.items || [];
     if (typeof items === 'string') { try { items = JSON.parse(items); } catch { items = []; } }
-    return Boolean(order.delivered_at) && items.some(i => KEPT_ITEM_STATUSES.includes(i.status));
+
+    const wasDelivered = Boolean(order.delivered_at) || 
+                         INVOICE_ELIGIBLE_STATUSES.includes(order.status) || 
+                         order.is_replacement === true ||
+                         items.some(i => INVOICE_ELIGIBLE_STATUSES.includes(i.status));
+    if (!wasDelivered) return false;
+
+    // Multi-item orders: if one item is returned, other delivered items stay with the customer.
+    // An invoice is issued only if there is at least one active (kept) item that has NOT been returned or cancelled.
+    const hasKeptItems = items.some(i => !isItemReturnedOrCancelled(i.status));
+    return hasKeptItems;
 };
 
 /**
@@ -60,12 +94,68 @@ exports.generateInvoiceHTML = async (orderId) => {
     const user = userResult.rows[0] || {};
 
     // 3. Prepare data for Handlebars mapping
-    const itemsSum = (order.items || []).reduce((sum, item) => sum + ((parseFloat(item.price) || 0) * (parseInt(item.quantity) || 1)), 0);
-    const subtotal = parseFloat(order.initial_subtotal || order.subtotal || 0) || itemsSum;
-    const discountAmount = parseFloat(order.discount_amount || 0);
-    const taxRate = 18; // Standard GST
-    const total = parseFloat(order.original_total ? (parseFloat(order.original_total) - discountAmount) : (order.total || 0)) || (subtotal + parseFloat(order.shipping || 0) - discountAmount);
-    
+    let rawItems = order.items || [];
+    if (typeof rawItems === 'string') {
+        try { rawItems = JSON.parse(rawItems); } catch { rawItems = []; }
+    }
+    const activeItems = rawItems.filter(item => !isItemReturnedOrCancelled(item));
+
+    if (activeItems.length === 0 && !order.is_replacement) {
+        throw new Error(`Cannot generate invoice: All items in order #${order.order_number} have been returned or cancelled.`);
+    }
+
+    const cancelledItems = rawItems.filter(item => isItemCancelled(item));
+    const returnedItems = rawItems.filter(item => isItemReturned(item));
+
+    const activeItemsSum = activeItems.reduce((sum, item) => sum + ((parseFloat(item.price) || 0) * (parseInt(item.quantity) || 1)), 0);
+    const cancelledItemsSum = cancelledItems.reduce((sum, item) => sum + ((parseFloat(item.price) || 0) * (parseInt(item.quantity) || 1)), 0);
+    const returnedItemsSum = returnedItems.reduce((sum, item) => sum + ((parseFloat(item.price) || 0) * (parseInt(item.quantity) || 1)), 0);
+
+    const orderRefundEligible = parseFloat(order.refund_eligible_amount || 0);
+    const orderInitialSubtotal = parseFloat(order.initial_subtotal || 0);
+    const orderCurrentSubtotal = parseFloat(order.subtotal || 0);
+
+    let effectiveCancellationSum = cancelledItemsSum;
+    let effectiveReturnedSum = returnedItemsSum;
+
+    if (effectiveCancellationSum === 0 && effectiveReturnedSum === 0) {
+        if (orderInitialSubtotal > orderCurrentSubtotal && orderCurrentSubtotal > 0) {
+            effectiveCancellationSum = Math.max(0, orderInitialSubtotal - orderCurrentSubtotal);
+        } else if (orderRefundEligible > 0 && orderRefundEligible < (activeItemsSum + orderRefundEligible)) {
+            effectiveCancellationSum = orderRefundEligible;
+        }
+    }
+
+    const hasCancellationAdjustment = effectiveCancellationSum > 0;
+    const hasReturnAdjustment = effectiveReturnedSum > 0;
+    const hasAdjustments = hasCancellationAdjustment || hasReturnAdjustment;
+
+    const originalSubtotal = (orderInitialSubtotal > 0)
+        ? orderInitialSubtotal
+        : (activeItemsSum + effectiveCancellationSum + effectiveReturnedSum);
+
+    // Subtotal strictly reflects kept/active products
+    const subtotal = activeItemsSum > 0 
+        ? activeItemsSum 
+        : (orderCurrentSubtotal > 0 ? orderCurrentSubtotal : originalSubtotal);
+
+    const originalDiscount = parseFloat(order.discount_amount || 0);
+    // Discount absorbed by remaining active items cannot exceed active subtotal
+    const discountAmount = Math.min(originalDiscount, subtotal);
+    const shippingFee = parseFloat(order.shipping || 0);
+    const storeSettings = await settingsService.getSettings();
+    const isGstEnabled = !!storeSettings.gst?.enabled || parseFloat(order.gst_amount || 0) > 0;
+    const gstRate = parseFloat(storeSettings.gst?.defaultRate || 18);
+    const orderGstAmount = parseFloat(order.gst_amount || 0);
+    const taxAmount = orderGstAmount > 0 
+        ? orderGstAmount 
+        : (isGstEnabled ? (subtotal * (gstRate / 100)) : 0);
+
+    const cardSurcharge = parseFloat(order.card_surcharge || 0);
+    const codCharge = parseFloat(order.cod_charge || 0);
+    const cardSurchargeRate = parseFloat(storeSettings.cardSurcharge?.rate || 2.0);
+    const total = Math.max(0, subtotal + shippingFee - discountAmount);
+
     // Calculate tax-inclusive subtotal if needed or just use as is
     // For this template, we'll follow the provided subtotal - discount = total logic
     
@@ -73,7 +163,7 @@ exports.generateInvoiceHTML = async (orderId) => {
     const dueDate = new Date(createdAt);
     dueDate.setDate(createdAt.getDate() + 15);
 
-    const taxAmount = (subtotal * (taxRate / 100));
+
 
     // ── Replacement (-REP) orders: list the real product value, then deduct it as a free replacement ──
     const isReplacement = order.is_replacement === true;
@@ -131,6 +221,59 @@ exports.generateInvoiceHTML = async (orderId) => {
         console.warn('⚠️ No logo found in any of the expected locations.');
     }
 
+    // Extract recipient name and clean street address from order data
+    let extractedRecipientName = '';
+    let cleanStreetAddress = (order.full_address || '').trim();
+
+    if (cleanStreetAddress.includes(',')) {
+        const firstCommaIndex = cleanStreetAddress.indexOf(',');
+        const potentialName = cleanStreetAddress.substring(0, firstCommaIndex).trim();
+        const potentialAddr = cleanStreetAddress.substring(firstCommaIndex + 1).trim();
+
+        const isAddressKeyword = /^(flat|plot|house|room|shop|building|bldg|sector|street|road|lane|opp|near|behind|at|post|door|no|apt|apartment)\b/i.test(potentialName);
+        const hasDigits = /\d/.test(potentialName);
+
+        if (!isAddressKeyword && !hasDigits && potentialName.length >= 2 && potentialName.length <= 50 && potentialAddr.length > 0) {
+            extractedRecipientName = potentialName;
+            cleanStreetAddress = potentialAddr;
+        }
+    }
+
+    const formatTitleCase = (str) => {
+        if (!str || typeof str !== 'string') return '';
+        return str
+            .toLowerCase()
+            .split(/\s+/)
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ')
+            .trim();
+    };
+
+    let resolvedUserName = extractedRecipientName;
+    if (!resolvedUserName && order.shippingAddress) {
+        resolvedUserName = (order.shippingAddress.fullName || `${order.shippingAddress.firstName || ''} ${order.shippingAddress.lastName || ''}`).trim();
+    }
+    if (!resolvedUserName) {
+        resolvedUserName = (order.customer_name || user.fullname || '').trim();
+    }
+    if (!resolvedUserName || resolvedUserName.includes('@') || resolvedUserName.toLowerCase() === 'customer') {
+        const emailFallback = (user.emailid || order.customer_email || order.user_id || '').split('@')[0];
+        resolvedUserName = emailFallback ? emailFallback.replace(/[._\d]+/g, ' ').trim() : 'Customer';
+    }
+    resolvedUserName = formatTitleCase(resolvedUserName) || 'Customer';
+
+    // Strip recipient name if cleanStreetAddress still starts with it
+    if (resolvedUserName && cleanStreetAddress.toLowerCase().startsWith(resolvedUserName.toLowerCase())) {
+        cleanStreetAddress = cleanStreetAddress.substring(resolvedUserName.length).replace(/^[\s,]+/, '').trim() || cleanStreetAddress;
+    }
+
+    const cleanCity = formatTitleCase(order.shippingAddress?.city || order.city || '');
+    const cleanState = formatTitleCase(order.shippingAddress?.state || order.state || '');
+    const cleanPincode = (order.shippingAddress?.pincode || order.postal_code || '').toString().trim();
+    const cityStatePin = [cleanCity, cleanState ? `${cleanState}${cleanPincode ? ` - ${cleanPincode}` : ''}` : cleanPincode].filter(Boolean).join(', ');
+    const resolvedUserAddress = [cleanStreetAddress, cityStatePin].filter(Boolean).join(', ');
+    const resolvedUserPhone = order.shippingAddress?.phone || order.customer_phone || user.contactno || 'N/A';
+
     const templateData = {
         currencySymbol: getCurrencySymbol(),
         logoBase64: logoBase64,
@@ -140,30 +283,32 @@ exports.generateInvoiceHTML = async (orderId) => {
             month: 'long',
             year: 'numeric'
         }),
-        userName: order.shippingAddress ? `${order.shippingAddress.firstName} ${order.shippingAddress.lastName}`.trim() : (order.customer_name || user.fullname || user.username || 'Customer'),
-        userAddress: (() => {
-            if (order.shippingAddress?.address) {
-                return `${order.shippingAddress.address}, ${order.shippingAddress?.city || ''}, ${order.shippingAddress?.state || ''} - ${order.shippingAddress?.pincode || ''}`;
-            }
-            let rawAddr = (order.full_address || '').trim();
-            if (rawAddr.includes(',')) {
-                const cIdx = rawAddr.indexOf(',');
-                const before = rawAddr.substring(0, cIdx).trim();
-                const after = rawAddr.substring(cIdx + 1).trim();
-                if (before && !/\d/.test(before) && after) {
-                    rawAddr = after;
-                }
-            }
-            return rawAddr || 'N/A';
-        })(),
-        userPhone: order.shippingAddress?.phone || user.contactno || 'N/A',
+        userName: resolvedUserName,
+        userAddress: resolvedUserAddress || 'N/A',
+        userPhone: resolvedUserPhone,
         paymentMethod: order.payment_method ? order.payment_method.toUpperCase() : 'N/A',
-        items: order.items.map(item => ({
-            name: item.name,
-            price: parseFloat(item.price).toFixed(2),
-            quantity: item.quantity,
-            total: (parseFloat(item.price) * item.quantity).toFixed(2)
-        })),
+        items: rawItems.map(item => {
+            const isCancelled = isItemCancelled(item);
+            const isReturned = isItemReturned(item);
+            const price = parseFloat(item.price) || 0;
+            const qty = parseInt(item.quantity) || 1;
+            return {
+                name: item.name,
+                price: price.toFixed(2),
+                quantity: qty,
+                total: (price * qty).toFixed(2),
+                isCancelled,
+                isReturned,
+                isDelivered: !isCancelled && !isReturned,
+                statusBadge: isCancelled ? 'CANCELLED' : (isReturned ? 'RETURNED' : 'DELIVERED')
+            };
+        }),
+        originalSubtotal: originalSubtotal.toFixed(2),
+        hasAdjustments,
+        hasCancellationAdjustment,
+        cancellationAdjustment: effectiveCancellationSum.toFixed(2),
+        hasReturnAdjustment,
+        returnAdjustment: effectiveReturnedSum.toFixed(2),
         subtotal: subtotal.toFixed(2),
         shippingFee: parseFloat(order.shipping || 0).toFixed(2),
         hasDiscount: discountAmount > 0,
@@ -173,8 +318,14 @@ exports.generateInvoiceHTML = async (orderId) => {
             ? `BOGO Offer Applied`
             : `Discount (${(discountAmount > 0 && subtotal > 0) ? ((discountAmount / subtotal) * 100).toFixed(0) : 0}%)`,
         discountAmount: discountAmount.toFixed(2),
-        taxRate: taxRate,
-        taxAmount: (total - subtotal - parseFloat(order.shipping || 0) + discountAmount).toFixed(2),
+        hasTax: isGstEnabled && taxAmount > 0,
+        taxRate: gstRate,
+        taxAmount: taxAmount.toFixed(2),
+        hasCardSurcharge: cardSurcharge > 0,
+        cardSurchargeRate: cardSurchargeRate,
+        cardSurchargeAmount: cardSurcharge.toFixed(2),
+        hasCodCharge: codCharge > 0,
+        codChargeAmount: codCharge.toFixed(2),
         grandTotal: total.toFixed(2),
         dueDate: dueDate.toLocaleDateString('en-IN', {
             day: '2-digit',

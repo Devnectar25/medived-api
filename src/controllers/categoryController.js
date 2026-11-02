@@ -2,8 +2,8 @@ const categoryService = require('../services/categoryService');
 
 exports.getCategories = async (req, res) => {
     try {
-        const { page, limit } = req.query;
-        const data = await categoryService.getAllCategories(page, limit);
+        const { page, limit, search, sortBy, sortOrder, active } = req.query;
+        const data = await categoryService.getAllCategories({ page, limit, search, sortBy, sortOrder, active });
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in getCategories:", error);
