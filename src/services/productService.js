@@ -30,10 +30,12 @@ const mapProduct = (p) => ({
     subCategoryId: p.subcategory_id || '', // Keep ID for reference
     specifications: p.specifications,
     promoted: p.promoted || false,
-    active: p.active !== false // Default true if null/undefined
+    active: p.active !== false, // Default true if null/undefined
+    gstRate: p.gst_rate !== undefined && p.gst_rate !== null ? parseFloat(p.gst_rate) : 0,
+    gst_rate: p.gst_rate !== undefined && p.gst_rate !== null ? parseFloat(p.gst_rate) : 0
 });
 
-exports.getAllProducts = async (page, limit, active, search, category_id, brand_id) => {
+exports.getAllProducts = async (page, limit, active, search, category_id, brand_id, stock_status) => {
     let whereClauses = [];
     let params = [];
     let paramIdx = 1;
@@ -58,6 +60,17 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
         whereClauses.push(`p.brand = $${paramIdx}`);
         params.push(brand_id);
         paramIdx++;
+    }
+
+    if (stock_status && stock_status !== 'all') {
+        const normStatus = stock_status.toLowerCase();
+        if (normStatus === 'in_stock' || normStatus === 'available') {
+            whereClauses.push(`p.instock = true AND COALESCE(p.stock_quantity, p.quantity, 0) >= 10`);
+        } else if (normStatus === 'low_stock') {
+            whereClauses.push(`p.instock = true AND COALESCE(p.stock_quantity, p.quantity, 0) > 0 AND COALESCE(p.stock_quantity, p.quantity, 0) < 10`);
+        } else if (normStatus === 'out_of_stock' || normStatus === 'sold_out') {
+            whereClauses.push(`(p.instock = false OR COALESCE(p.stock_quantity, p.quantity, 0) <= 0)`);
+        }
     }
 
     const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
@@ -118,6 +131,31 @@ exports.getProductById = async (id) => {
         [id]
     );
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
+};
+
+exports.bulkUpdateStatus = async (ids, active) => {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const numericIds = ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+    if (numericIds.length === 0) return [];
+
+    const result = await pool.query(
+        `UPDATE products SET active = $1, updated_at = NOW() WHERE product_id = ANY($2::integer[]) RETURNING *`,
+        [Boolean(active), numericIds]
+    );
+    return result.rows.map(mapProduct);
+};
+
+exports.bulkDelete = async (ids) => {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const numericIds = ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+    if (numericIds.length === 0) return [];
+
+    const results = [];
+    for (const id of numericIds) {
+        const deleted = await exports.deleteProduct(id);
+        if (deleted) results.push(deleted);
+    }
+    return results;
 };
 
 exports.getActiveProducts = async () => {
@@ -206,20 +244,45 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
     return related.map(mapProduct);
 };
 
+
+let hasCheckedGstCol = false;
+const ensureProductGstCol = async () => {
+    if (hasCheckedGstCol) return;
+    try {
+        await pool.query(`
+            DO $ 
+            BEGIN 
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'products' AND column_name = 'gst_rate'
+                ) THEN 
+                    ALTER TABLE products ADD COLUMN gst_rate NUMERIC(5, 2) DEFAULT 0;
+                END IF;
+            END $;
+        `);
+        hasCheckedGstCol = true;
+    } catch (e) {
+        // Continue safely
+    }
+};
 exports.createProduct = async (product) => {
+    await ensureProductGstCol();
     const {
         productname, description, shortdescription, price, originalprice,
         discount, category_id: category_id, brand, image, instock, promoted,
         benefits, ingredients, usage, directions, quantity, supports, images,
-        expiryinfo, subcategory_id, specifications, active, storage_instructions, storageInstructions, medicine_size, medicineSize
+        expiryinfo, subcategory_id, specifications, active, storage_instructions, storageInstructions, medicine_size, medicineSize,
+        gst_rate, gstRate
     } = product;
+
+    const effectiveGstRate = gst_rate !== undefined ? parseFloat(gst_rate) : (gstRate !== undefined ? parseFloat(gstRate) : 0);
 
     const result = await pool.query(
         `INSERT INTO products 
-        (productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, stock_quantity, supports, product_images, expiryinfo, subcategory_id, specifications, active, storage_instructions, medicine_size, createdate, updated_at) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW(), NOW()) 
+        (productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, stock_quantity, supports, product_images, expiryinfo, subcategory_id, specifications, active, storage_instructions, medicine_size, gst_rate, createdate, updated_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, NOW(), NOW()) 
         RETURNING *`,
-        [productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity || 0, supports || [], images || [], expiryinfo, subcategory_id, specifications, active !== false, storage_instructions !== undefined ? storage_instructions : (storageInstructions || ''), medicine_size !== undefined ? medicine_size : (medicineSize || '')]
+        [productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity || 0, supports || [], images || [], expiryinfo, subcategory_id, specifications, active !== false, storage_instructions !== undefined ? storage_instructions : (storageInstructions || ''), medicine_size !== undefined ? medicine_size : (medicineSize || ''), effectiveGstRate]
     );
     return mapProduct(result.rows[0]);
 };
@@ -251,12 +314,15 @@ const getFolderFromUrl = (url) => {
 };
 
 exports.updateProduct = async (id, product) => {
+    await ensureProductGstCol();
     const {
         productname, description, shortdescription, price, originalprice,
         discount, category_id: category_id, brand, image, instock, promoted,
         benefits, ingredients, usage, directions, quantity, supports, images,
-        expiryinfo, subcategory_id, specifications, active, storage_instructions, storageInstructions, medicine_size, medicineSize
+        expiryinfo, subcategory_id, specifications, active, storage_instructions, storageInstructions, medicine_size, medicineSize,
+        gst_rate, gstRate
     } = product;
+    const effectiveGstRate = gst_rate !== undefined ? parseFloat(gst_rate) : (gstRate !== undefined ? parseFloat(gstRate) : null);
 
     // 1. Get current product to check for removed images
     const currentRes = await pool.query("SELECT product_images FROM products WHERE product_id = $1::integer", [id]);
@@ -288,12 +354,38 @@ exports.updateProduct = async (id, product) => {
             active = COALESCE($23, active),
             storage_instructions = COALESCE($24, storage_instructions),
             medicine_size = COALESCE($25, medicine_size),
+            gst_rate = COALESCE($26, gst_rate),
             updated_at = NOW()
         WHERE product_id = $1::integer 
         RETURNING *`,
-        [id, productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, supports, images, expiryinfo, subcategory_id, specifications, active, storage_instructions !== undefined ? storage_instructions : (storageInstructions !== undefined ? storageInstructions : null), medicine_size !== undefined ? medicine_size : (medicineSize !== undefined ? medicineSize : null)]
+        [id, productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, supports, images, expiryinfo, subcategory_id, specifications, active, storage_instructions !== undefined ? storage_instructions : (storageInstructions !== undefined ? storageInstructions : null), medicine_size !== undefined ? medicine_size : (medicineSize !== undefined ? medicineSize : null), effectiveGstRate]
     );
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
+};
+
+exports.bulkUpdateStatus = async (ids, active) => {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const numericIds = ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+    if (numericIds.length === 0) return [];
+
+    const result = await pool.query(
+        `UPDATE products SET active = $1, updated_at = NOW() WHERE product_id = ANY($2::integer[]) RETURNING *`,
+        [Boolean(active), numericIds]
+    );
+    return result.rows.map(mapProduct);
+};
+
+exports.bulkDelete = async (ids) => {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const numericIds = ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+    if (numericIds.length === 0) return [];
+
+    const results = [];
+    for (const id of numericIds) {
+        const deleted = await exports.deleteProduct(id);
+        if (deleted) results.push(deleted);
+    }
+    return results;
 };
 
 exports.deleteProduct = async (id) => {
@@ -334,6 +426,31 @@ exports.toggleProductStatus = async (id) => {
         RETURNING *
     `, [id]);
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
+};
+
+exports.bulkUpdateStatus = async (ids, active) => {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const numericIds = ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+    if (numericIds.length === 0) return [];
+
+    const result = await pool.query(
+        `UPDATE products SET active = $1, updated_at = NOW() WHERE product_id = ANY($2::integer[]) RETURNING *`,
+        [Boolean(active), numericIds]
+    );
+    return result.rows.map(mapProduct);
+};
+
+exports.bulkDelete = async (ids) => {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const numericIds = ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+    if (numericIds.length === 0) return [];
+
+    const results = [];
+    for (const id of numericIds) {
+        const deleted = await exports.deleteProduct(id);
+        if (deleted) results.push(deleted);
+    }
+    return results;
 };
 
 /**

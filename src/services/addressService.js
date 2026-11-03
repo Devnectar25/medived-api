@@ -1,5 +1,83 @@
 const pool = require('../config/db');
 
+const pincodeCache = new Map();
+
+exports.lookupPincode = async (pincode) => {
+    const pin = (pincode || '').toString().trim();
+    if (!/^\d{6}$/.test(pin)) {
+        throw new Error('Valid 6-digit pincode is required');
+    }
+
+    if (pincodeCache.has(pin)) {
+        return pincodeCache.get(pin);
+    }
+
+    const toTitle = (s) => (s || '')
+        .toLowerCase()
+        .split(/\s+/)
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ')
+        .trim();
+
+    // 1. Try postalpincode.in with 3s timeout
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const res = await fetch(`https://api.postalpincode.in/pincode/${pin}`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && data[0]?.Status === 'Success' && Array.isArray(data[0]?.PostOffice) && data[0].PostOffice.length > 0) {
+                const po = data[0].PostOffice[0];
+                const rawCity = po.District || po.Division || po.Name || '';
+                const rawState = po.State || '';
+                const result = {
+                    city: toTitle(rawCity),
+                    state: toTitle(rawState),
+                    pincode: pin
+                };
+                if (result.city && result.state) {
+                    pincodeCache.set(pin, result);
+                    return result;
+                }
+            }
+        }
+    } catch (e) {
+        // Fallback
+    }
+
+    // 2. Try zippopotam.us with 3s timeout
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const res = await fetch(`https://api.zippopotam.us/in/${pin}`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data?.places) && data.places.length > 0) {
+                const place = data.places[0];
+                const rawState = place.state || '';
+                const rawCity = place['place name'] || '';
+                const result = {
+                    city: toTitle(rawCity),
+                    state: toTitle(rawState),
+                    pincode: pin
+                };
+                if (result.state) {
+                    pincodeCache.set(pin, result);
+                    return result;
+                }
+            }
+        }
+    } catch (e) {
+        // Fallback
+    }
+
+    return null;
+};
+
 exports.getAddressesByUserId = async (userId) => {
     const result = await pool.query(
         "SELECT * FROM public.user_addresses WHERE user_id = $1 ORDER BY created_at DESC",

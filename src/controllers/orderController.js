@@ -59,7 +59,7 @@ exports.getCancelledOrders = async (req, res) => {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
-        const refundStatusFilter = req.query.refundStatusFilter || 'active';
+        const refundStatusFilter = req.query.refundStatusFilter || 'All';
         const searchTerm = req.query.searchTerm;
 
         const result = await orderService.getCancelledOrders({ limit, offset, refundStatusFilter, searchTerm });
@@ -233,7 +233,7 @@ exports.reorderOrder = async (req, res) => {
             return res.status(403).json({ success: false, message: 'Not authorized to reorder this order' });
         }
 
-        const result = await orderService.reorderOrder(targetId, userId);
+        const result = await orderService.reorderOrder(order.id, userId);
         res.status(200).json(result);
     } catch (error) {
         console.error('Reorder Error:', error);
@@ -369,6 +369,18 @@ exports.confirmReceivedAndCreateReplacement = async (req, res) => {
         });
     } catch (error) {
         console.error('[OrderController] confirmReceivedAndCreateReplacement Error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+
+exports.getOrderRefundCalculation = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const calculation = await orderService.calculateOrderRefundBreakdown(id);
+        res.status(200).json({ success: true, data: calculation });
+    } catch (error) {
+        console.error('[OrderController] getOrderRefundCalculation Error:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 };

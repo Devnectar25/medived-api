@@ -144,6 +144,7 @@ app.use('/api/admin/targeting', require('./routes/targetingRoutes'));
 app.use('/api/admin/users', require('./routes/userRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/campaigns', require('./routes/campaignRoutes'));
+app.use('/api/settings', require('./routes/settingsRoutes'));
 
 app.get('/', (req, res) => {
     res.send("HomeVed API is running....");

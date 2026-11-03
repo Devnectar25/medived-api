@@ -12,6 +12,7 @@ const pool = require('../config/db');
 // Default DTDC Credentials (can be overridden via environment variables)
 const DTDC_API_KEY = process.env.DTDC_API_KEY || 'ee2b3254c59f462f8bd2f65ff2622c';
 const DTDC_CUSTOMER_CODE = process.env.DTDC_CUSTOMER_CODE || 'GL16207';
+const DTDC_REVERSE_CUSTOMER_CODE = process.env.DTDC_REVERSE_CUSTOMER_CODE || DTDC_CUSTOMER_CODE;
 const DTDC_BASE_URL = process.env.DTDC_BASE_URL || 'https://pxapi.dtdc.in';
 
 const DTDC_TRACK_BASE_URL = process.env.DTDC_TRACK_BASE_URL || 'https://blktracksvc.dtdc.com';
@@ -26,14 +27,115 @@ const HOMVED_ORIGIN = {
     name: "Homved Medicine Center",
     phone: "9075669251",
     alternate_phone: "0000000000",
-    address_line_1: "63-2 Bombay Talkies Comp, Himansuroy Road Malad W, Malad, Mumbai",
-    address_line_2: "",
+    address_line_1: "63-2 Bombay Talkies Compound",
+    address_line_2: "Himansuroy Road, Malad West",
     pincode: "400064",
     city: "Mumbai",
     latitude: "",
     longitude: "",
     state: "Maharashtra"
 };
+
+/**
+ * Checks if DTDC API error message indicates the account is restricted to forward-only consignments
+ */
+function isForwardCustomerError(msg) {
+    if (!msg || typeof msg !== 'string') return false;
+    const lower = msg.toLowerCase();
+    return (
+        lower.includes('forward customer') ||
+        lower.includes('invalid consignment type') ||
+        lower.includes('reverse consignment') ||
+        lower.includes('customer type')
+    );
+}
+
+/**
+ * Format string into Title Case (e.g. "dhule" -> "Dhule", "maharashtra" -> "Maharashtra")
+ */
+function formatTitleCase(str) {
+    if (!str) return '';
+    return str.toString().toLowerCase().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ').trim();
+}
+
+/**
+ * Sanitize and structure address details specifically for DTDC Softdata API & 4x6 Label Generation
+ * - Extracts clean recipient name if full_address starts with a name prefix
+ * - Strips duplicate name from street address
+ * - Intelligently splits street address into address_line_1 (max 38 chars) & address_line_2 (max 38 chars)
+ * - Formats city and state in Title Case
+ */
+function sanitizeDTDCAddress(order) {
+    let rawAddress = (order.full_address || '').trim();
+    let recipientName = (order.customer_name || '').trim();
+
+    // If full_address starts with a name prefix followed by comma (e.g. "Gayatri Badgujar, lane no.6, kusumba")
+    if (rawAddress.includes(',')) {
+        const firstCommaIndex = rawAddress.indexOf(',');
+        const possibleName = rawAddress.substring(0, firstCommaIndex).trim();
+        const remainder = rawAddress.substring(firstCommaIndex + 1).trim();
+
+        // If possibleName has letters only (no digits) and reasonable length
+        if (possibleName && !/\d/.test(possibleName) && possibleName.length >= 2 && possibleName.length <= 40 && remainder.length > 0) {
+            if (!recipientName || recipientName.toLowerCase() === 'customer' || recipientName.includes('@')) {
+                recipientName = possibleName;
+            }
+            rawAddress = remainder;
+        }
+    }
+
+    // Strip recipientName if clean address still starts with it
+    if (recipientName && rawAddress.toLowerCase().startsWith(recipientName.toLowerCase())) {
+        rawAddress = rawAddress.substring(recipientName.length).replace(/^[\s,]+/, '').trim() || rawAddress;
+    }
+
+    const finalName = formatTitleCase(recipientName || order.fullname || 'Customer').slice(0, 40) || 'Customer';
+    const destPhone = (order.customer_phone || '9999999999').replace(/[^0-9]/g, '').slice(-10) || '9999999999';
+    const destPincode = (order.postal_code || '').toString().trim();
+
+    let cleanStreet = rawAddress || 'Customer Address';
+    let city = (order.city || '').toString().trim();
+    let state = (order.state || '').toString().trim();
+
+    const finalCity = formatTitleCase(city) || 'Mumbai';
+    const finalState = formatTitleCase(state) || 'Maharashtra';
+
+    // Split cleanStreet across address_line_1 and address_line_2 (max 38 chars each for DTDC thermal labels)
+    let addrLine1 = cleanStreet;
+    let addrLine2 = '';
+
+    if (cleanStreet.length > 35) {
+        let splitIdx = cleanStreet.lastIndexOf(',', 35);
+        if (splitIdx === -1 || splitIdx < 12) {
+            splitIdx = cleanStreet.lastIndexOf(' ', 35);
+        }
+        if (splitIdx !== -1 && splitIdx >= 10) {
+            addrLine1 = cleanStreet.substring(0, splitIdx).replace(/,+$/, '').trim();
+            addrLine2 = cleanStreet.substring(splitIdx + 1).replace(/^[, ]+/, '').trim();
+        } else {
+            addrLine1 = cleanStreet.substring(0, 35).trim();
+            addrLine2 = cleanStreet.substring(35).trim();
+        }
+    }
+
+    // In DTDC Softdata, if addrLine2 is empty, provide locality or city so line 2 isn't blank
+    if (!addrLine2) {
+        addrLine2 = `${finalCity}, ${destPincode}`;
+    }
+
+    addrLine1 = addrLine1.slice(0, 40).trim();
+    addrLine2 = addrLine2.slice(0, 40).trim();
+
+    return {
+        name: finalName,
+        phone: destPhone,
+        address_line_1: addrLine1,
+        address_line_2: addrLine2,
+        city: finalCity,
+        state: finalState,
+        pincode: destPincode
+    };
+}
 
 // ── Network timeouts (ms): DTDC calls must never hang an admin request indefinitely ──
 const DTDC_TIMEOUT_MS = {
@@ -146,15 +248,10 @@ exports.createShipment = async (orderId, packageOptions = {}) => {
 
     const order = orderRes.rows[0];
 
-    // Destination details validation
-    const destName = (order.customer_name || 'Customer').trim();
-    const destPhone = (order.customer_phone || '9999999999').replace(/[^0-9]/g, '').slice(-10) || '9999999999';
-    const destAddress = (order.full_address || 'Customer Address').trim();
-    const destCity = (order.city || 'Mumbai').trim();
-    const destState = (order.state || 'Maharashtra').trim();
-    const destPincode = (order.postal_code || '').trim();
+    // Destination details sanitization for DTDC
+    const destDetails = sanitizeDTDCAddress(order);
 
-    if (!destPincode) {
+    if (!destDetails.pincode) {
         throw new Error('Destination pincode is missing for this order.');
     }
 
@@ -219,16 +316,16 @@ exports.createShipment = async (orderId, packageOptions = {}) => {
                     state: HOMVED_ORIGIN.state
                 },
                 destination_details: {
-                    name: destName,
-                    phone: destPhone,
+                    name: destDetails.name,
+                    phone: destDetails.phone,
                     alternate_phone: "0000000000",
-                    address_line_1: destAddress,
-                    address_line_2: "",
-                    pincode: destPincode,
-                    city: destCity,
+                    address_line_1: destDetails.address_line_1,
+                    address_line_2: destDetails.address_line_2,
+                    pincode: destDetails.pincode,
+                    city: destDetails.city,
                     latitude: "",
                     longitude: "",
-                    state: destState
+                    state: destDetails.state
                 },
                 return_details: {
                     name: HOMVED_ORIGIN.name,
@@ -417,14 +514,48 @@ exports.trackShipment = async (trackingNumber) => {
     // Auto-sync order in DB if marked Delivered
     if (isDelivered) {
         try {
-            await pool.query(
+            const deliveredRes = await pool.query(
                 `UPDATE orders 
                  SET status = 'Delivered', 
+                     payment_status = CASE 
+                         WHEN LOWER(payment_method) = 'cod' AND payment_status NOT IN ('Refunded', 'Cancelled') THEN 'Paid' 
+                         ELSE payment_status 
+                     END,
+                     payment_type = CASE 
+                         WHEN LOWER(payment_method) = 'cod' THEN 'Paid' 
+                         ELSE payment_type 
+                     END,
                      delivered_at = COALESCE(delivered_at, NOW()), 
                      updated_at = NOW() 
-                 WHERE tracking_number = $1 AND status != 'Delivered'`,
+                 WHERE tracking_number = $1 
+                   AND status != 'Delivered'
+                   AND status NOT IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'Refunded')
+                 RETURNING id, is_replacement, parent_order_id, order_number`,
                 [trackingNumber]
             );
+
+            if (deliveredRes.rows.length > 0) {
+                const delOrder = deliveredRes.rows[0];
+                if ((delOrder.is_replacement || delOrder.order_number?.endsWith('-REP')) && delOrder.parent_order_id) {
+                    console.log(`[DTDC] Replacement shipment delivered for tracking ${trackingNumber}. Syncing parent order ${delOrder.parent_order_id} to Replaced.`);
+                    await pool.query(
+                        `UPDATE order_items 
+                         SET status = 'Replaced' 
+                         WHERE order_id = $1::uuid 
+                           AND (status ILIKE '%replace%' OR status = 'Received at Homved')`,
+                        [delOrder.parent_order_id]
+                    );
+                    await pool.query(
+                        `UPDATE orders 
+                         SET status = 'Replaced', 
+                             logistics_status = 'Delivered',
+                             delivered_at = COALESCE(delivered_at, NOW()),
+                             updated_at = NOW() 
+                         WHERE id = $1::uuid`,
+                        [delOrder.parent_order_id]
+                    );
+                }
+            }
         } catch (dbErr) {
             console.error('[DTDC] Failed to auto-update order to Delivered:', dbErr);
         }
@@ -498,14 +629,9 @@ exports.createReverseShipment = async (orderId, packageOptions = {}) => {
     }
 
     // Customer is origin for reverse pickup
-    const pickupName = (order.customer_name || 'Customer').trim();
-    const pickupPhone = (order.customer_phone || '9999999999').replace(/[^0-9]/g, '').slice(-10) || '9999999999';
-    const pickupAddress = (order.full_address || 'Customer Address').trim();
-    const pickupCity = (order.city || 'Mumbai').trim();
-    const pickupState = (order.state || 'Maharashtra').trim();
-    const pickupPincode = (order.postal_code || '').trim();
+    const pickupDetails = sanitizeDTDCAddress(order);
 
-    if (!pickupPincode || pickupPincode.length !== 6) {
+    if (!pickupDetails.pincode || pickupDetails.pincode.length !== 6) {
         throw new Error('Customer pickup pincode is missing or invalid for reverse shipment.');
     }
 
@@ -524,7 +650,7 @@ exports.createReverseShipment = async (orderId, packageOptions = {}) => {
     const payload = {
         consignments: [
             {
-                customer_code: DTDC_CUSTOMER_CODE,
+                customer_code: DTDC_REVERSE_CUSTOMER_CODE,
                 service_type_id: "B2C PRIORITY",
                 load_type: "NON-DOCUMENT",
                 consignment_type: "Reverse",
@@ -538,16 +664,16 @@ exports.createReverseShipment = async (orderId, packageOptions = {}) => {
                 declared_value: declaredValue,
                 num_pieces: "1",
                 origin_details: {
-                    name: pickupName,
-                    phone: pickupPhone,
+                    name: pickupDetails.name,
+                    phone: pickupDetails.phone,
                     alternate_phone: "0000000000",
-                    address_line_1: pickupAddress,
-                    address_line_2: "",
-                    pincode: pickupPincode,
-                    city: pickupCity,
+                    address_line_1: pickupDetails.address_line_1,
+                    address_line_2: pickupDetails.address_line_2,
+                    pincode: pickupDetails.pincode,
+                    city: pickupDetails.city,
                     latitude: "",
                     longitude: "",
-                    state: pickupState
+                    state: pickupDetails.state
                 },
                 destination_details: {
                     name: HOMVED_ORIGIN.name,
@@ -586,35 +712,76 @@ exports.createReverseShipment = async (orderId, packageOptions = {}) => {
         ]
     };
 
-    console.log(`[DTDC] Creating REVERSE shipment for Order ${order.order_number}...`);
+    console.log(`[DTDC] Creating REVERSE shipment for Order ${order.order_number} (Customer Code: ${DTDC_REVERSE_CUSTOMER_CODE})...`);
 
-    const response = await fetchWithTimeout(`${DTDC_BASE_URL}/api/customer/integration/consignment/softdata`, {
-        method: 'POST',
-        headers: {
-            'api-key': DTDC_API_KEY,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-    }, DTDC_TIMEOUT_MS.booking, 'reverse booking');
+    let consignment = null;
+    let reverseTrackingNumber = null;
+    let isForwardAccountFallback = false;
+    let fallbackReason = '';
 
-    const responseData = await readJson(response, 'reverse booking');
-    console.log('[DTDC] Reverse Softdata Response:', JSON.stringify(responseData, null, 2));
+    try {
+        const response = await fetchWithTimeout(`${DTDC_BASE_URL}/api/customer/integration/consignment/softdata`, {
+            method: 'POST',
+            headers: {
+                'api-key': DTDC_API_KEY,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        }, DTDC_TIMEOUT_MS.booking, 'reverse booking');
 
-    if (responseData.status !== 'OK' || !responseData.data || !responseData.data[0]) {
-        const errorMsg = responseData.error?.message || responseData.message || 'DTDC failed to book reverse pickup';
-        throw new Error(`DTDC Reverse Error: ${errorMsg}`);
-    }
+        const responseData = await readJson(response, 'reverse booking');
+        console.log('[DTDC] Reverse Softdata Response:', JSON.stringify(responseData, null, 2));
 
-    const consignment = responseData.data[0];
-    if (!consignment.success || !consignment.reference_number) {
-        const rawMsg = consignment.message || 'No tracking reference returned';
-        if (rawMsg.includes('Special destination not enabled')) {
-            throw new Error(`Special Destination Not Enabled: Customer pincode ${pickupPincode} is flagged by DTDC as remote/special destination.`);
+        const rawError = responseData.error?.message || responseData.message || responseData.data?.[0]?.message || '';
+
+        if (isForwardCustomerError(rawError)) {
+            console.warn(`[DTDC] Customer account ${DTDC_REVERSE_CUSTOMER_CODE} is forward-only (${rawError}). Attempting reverse pickup with consignment_type: 'Forward'...`);
+            payload.consignments[0].consignment_type = "Forward";
+            try {
+                const retryResp = await fetchWithTimeout(`${DTDC_BASE_URL}/api/customer/integration/consignment/softdata`, {
+                    method: 'POST',
+                    headers: {
+                        'api-key': DTDC_API_KEY,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                }, DTDC_TIMEOUT_MS.booking, 'reverse-as-forward booking');
+
+                const retryData = await readJson(retryResp, 'reverse-as-forward booking');
+                console.log('[DTDC] Reverse-as-Forward Response:', JSON.stringify(retryData, null, 2));
+
+                if (retryData.status === 'OK' && retryData.data && retryData.data[0]?.success && retryData.data[0]?.reference_number) {
+                    consignment = retryData.data[0];
+                    reverseTrackingNumber = consignment.reference_number;
+                    console.log(`[DTDC] Reverse pickup booked successfully with consignment_type Forward! AWB: ${reverseTrackingNumber}`);
+                } else {
+                    fallbackReason = retryData.data?.[0]?.message || retryData.message || rawError;
+                }
+            } catch (retryErr) {
+                console.warn('[DTDC] Retry as Forward error:', retryErr.message);
+                fallbackReason = retryErr.message;
+            }
+        } else if (responseData.status === 'OK' && responseData.data && responseData.data[0]?.success && responseData.data[0]?.reference_number) {
+            consignment = responseData.data[0];
+            reverseTrackingNumber = consignment.reference_number;
+        } else {
+            fallbackReason = rawError || 'DTDC rejected reverse booking';
         }
-        throw new Error(`DTDC Reverse Booking Failed: ${rawMsg}`);
+    } catch (apiErr) {
+        console.warn('[DTDC] Reverse booking request failure:', apiErr.message);
+        fallbackReason = apiErr.message;
     }
 
-    const reverseTrackingNumber = consignment.reference_number; // e.g. 7X...
+    // If reverse booking cannot be completed on DTDC (e.g. forward-only contract or courier failure):
+    // DO NOT abort or block the return/replacement journey!
+    // Generate an internal reverse tracking identifier so returns, replacements, QA inspection,
+    // and refunds can be processed seamlessly.
+    if (!reverseTrackingNumber) {
+        isForwardAccountFallback = true;
+        const cleanOrderNum = (order.order_number || orderId.toString()).replace(/^#/, '');
+        reverseTrackingNumber = `REV-DTDC-${cleanOrderNum}`;
+        console.warn(`[DTDC] Forward-only account contract. Assigned internal reverse tracking reference: ${reverseTrackingNumber} for Order ${cleanOrderNum}. Reason: ${fallbackReason}`);
+    }
 
     // Update order in database with reverse tracking details
     const updateRes = await pool.query(
@@ -631,7 +798,9 @@ exports.createReverseShipment = async (orderId, packageOptions = {}) => {
     return {
         success: true,
         reverseTrackingNumber: reverseTrackingNumber,
-        customerReferenceNumber: consignment.customer_reference_number,
+        isForwardAccountFallback: isForwardAccountFallback,
+        warning: isForwardAccountFallback ? `DTDC account is forward-only. Assigned internal reverse tracking reference: ${reverseTrackingNumber}. You can enter an external courier AWB if booked offline.` : undefined,
+        customerReferenceNumber: consignment?.customer_reference_number || `${order.order_number}-REV`,
         order: updateRes.rows[0],
         dtdcResponse: consignment
     };

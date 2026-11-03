@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const analyticsService = require('../ga/analyticsService.cjs');
+const whatsappService = require('./whatsappService');
 
 /**
  * Fetch top customers by total spending
@@ -89,14 +90,15 @@ exports.getUsersByIds = async (userIds) => {
  * @param {Array} userIds 
  */
 exports.assignCouponToUsers = async (couponId, userIds) => {
-    if (!userIds || userIds.length === 0) return { success: true, assignedCount: 0 };
+    if (!userIds || userIds.length === 0) return { success: true, assignedCount: 0, notifiedCount: 0 };
 
     // Verify coupon exists and is active
     const couponCheck = await pool.query(
-        'SELECT id FROM coupons WHERE id = $1 AND active = true',
+        'SELECT * FROM coupons WHERE id = $1 AND active = true',
         [couponId]
     );
     if (couponCheck.rows.length === 0) throw new Error('Invalid or inactive coupon ID');
+    const coupon = couponCheck.rows[0];
 
     const client = await pool.connect();
     try {
@@ -116,12 +118,50 @@ exports.assignCouponToUsers = async (couponId, userIds) => {
                  SET status      = 'assigned',
                      assigned_at = NOW()
                  WHERE coupon_assignments.status = 'revoked'
-             RETURNING id`,
+             RETURNING id, user_id`,
             [couponId, userIds]
         );
 
         await client.query('COMMIT');
-        return { success: true, assignedCount: result.rowCount };
+
+        // ── NOTIFICATION DISPATCH: Send notifications to assigned customers ──
+        let notifiedCount = 0;
+        try {
+            const usersRes = await pool.query(
+                `SELECT username, fullname, emailid, contactno FROM users WHERE username = ANY($1)`,
+                [userIds]
+            );
+
+            for (const user of usersRes.rows) {
+                try {
+                    const notifyRes = await whatsappService.sendCouponAssignmentNotification(user, coupon);
+                    notifiedCount++;
+
+                    // Log notification in whatsapp_logs audit table
+                    await pool.query(
+                        `INSERT INTO whatsapp_logs (user_id, phone, message, status, provider_response, created_at)
+                         VALUES ($1, $2, $3, $4, $5, NOW())`,
+                        [
+                            user.username,
+                            user.contactno || 'N/A',
+                            notifyRes.message || 'Coupon assigned notification',
+                            notifyRes.status || 'SENT',
+                            JSON.stringify(notifyRes.providerResponse || {})
+                        ]
+                    ).catch(logErr => console.warn('[TargetingService] whatsapp_log insert warning:', logErr.message));
+                } catch (userNotifyErr) {
+                    console.error(`[TargetingService] Failed to notify user ${user.username}:`, userNotifyErr.message);
+                }
+            }
+        } catch (fetchErr) {
+            console.error('[TargetingService] Error fetching users for notification:', fetchErr.message);
+        }
+
+        return { 
+            success: true, 
+            assignedCount: result.rowCount,
+            notifiedCount 
+        };
 
     } catch (e) {
         await client.query('ROLLBACK');

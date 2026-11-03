@@ -1,5 +1,18 @@
 const addressService = require('../services/addressService');
 
+exports.lookupPincode = async (req, res) => {
+    try {
+        const { pincode } = req.params;
+        const result = await addressService.lookupPincode(pincode);
+        if (!result) {
+            return res.status(404).json({ success: false, message: 'Pincode not found' });
+        }
+        res.status(200).json({ success: true, data: result });
+    } catch (err) {
+        res.status(400).json({ success: false, message: err.message });
+    }
+};
+
 exports.getUserAddresses = async (req, res) => {
     try {
         const { userId } = req.params;

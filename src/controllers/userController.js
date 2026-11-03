@@ -33,6 +33,14 @@ exports.updateProfile = async (req, res) => {
             return res.status(401).json({ success: false, message: 'User not identified' });
         }
 
+        let cleanFullName = undefined;
+        if (fullName !== undefined) {
+            if (fullName && /\d/.test(fullName)) {
+                return res.status(400).json({ success: false, message: 'User Name must not contain numeric characters' });
+            }
+            cleanFullName = fullName ? fullName.toString().replace(/[^a-zA-Z\s]/g, '').trim() : '';
+        }
+
         let cleanPhone = undefined;
         if (phone !== undefined) {
             cleanPhone = phone ? phone.toString().trim().replace(/\D/g, '') : '';
@@ -51,7 +59,7 @@ exports.updateProfile = async (req, res) => {
                 avatar_url = COALESCE($3, avatar_url)
             WHERE username = $4
             RETURNING username, emailid, fullname, contactno, avatar_url, member_since
-        `, [fullName || null, cleanPhone || null, avatar || null, username]);
+        `, [cleanFullName !== undefined ? (cleanFullName || null) : null, cleanPhone || null, avatar || null, username]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, message: 'User not found' });

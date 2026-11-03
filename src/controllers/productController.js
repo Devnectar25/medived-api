@@ -3,8 +3,8 @@ const chatbotService = require('../services/chatbotService');
 
 exports.getProducts = async (req, res) => {
     try {
-        const { page, limit, active, search, category, brand } = req.query;
-        const data = await productService.getAllProducts(page, limit, active, search, category, brand);
+        const { page, limit, active, search, category, brand, stock_status } = req.query;
+        const data = await productService.getAllProducts(page, limit, active, search, category, brand, stock_status);
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in getProducts:", error);
@@ -186,6 +186,42 @@ exports.toggleProductStatus = async (req, res) => {
         res.json({ success: true, data, message: "Product status toggled successfully" });
     } catch (error) {
         console.error("Error in toggleProductStatus:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+exports.bulkUpdateProductStatus = async (req, res) => {
+    try {
+        const { ids, active } = req.body;
+        if (!ids || !Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ success: false, message: "Product IDs are required" });
+        }
+        const updated = await productService.bulkUpdateStatus(ids, active);
+        res.json({
+            success: true,
+            message: `${updated.length} products ${active ? 'activated' : 'deactivated'} successfully`,
+            data: updated
+        });
+    } catch (error) {
+        console.error("Error in bulkUpdateProductStatus:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+exports.bulkDeleteProducts = async (req, res) => {
+    try {
+        const { ids } = req.body;
+        if (!ids || !Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ success: false, message: "Product IDs are required" });
+        }
+        const deleted = await productService.bulkDelete(ids);
+        res.json({
+            success: true,
+            message: `${deleted.length} products deleted successfully`,
+            data: deleted
+        });
+    } catch (error) {
+        console.error("Error in bulkDeleteProducts:", error);
         res.status(500).json({ success: false, error: error.message });
     }
 };

@@ -25,6 +25,7 @@ router.get('/:id/dtdc/track', dtdcController.trackShipment);
 
 router.get('/:id', orderController.getOrderById);
 router.get('/:id/invoice', orderController.downloadInvoice);
+router.get('/:id/refund-calculation', authorize('admin'), orderController.getOrderRefundCalculation);
 router.post('/:id/reorder', orderController.reorderOrder);
 router.patch('/:id/status', orderController.updateOrderStatus);
 router.patch('/:id/address', authorize('admin'), orderController.updateOrderAddress);

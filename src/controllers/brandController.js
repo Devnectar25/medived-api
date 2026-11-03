@@ -19,8 +19,8 @@ exports.uploadMiddleware = multer({
 
 exports.getBrands = async (req, res) => {
     try {
-        const { page, limit } = req.query;
-        const data = await brandService.getAllBrands(page, limit);
+        const { page, limit, search, sortBy, sortOrder, active } = req.query;
+        const data = await brandService.getAllBrands({ page, limit, search, sortBy, sortOrder, active });
         res.json({ success: true, data });
     } catch (error) {
         console.error("Error in getBrands:", error);
