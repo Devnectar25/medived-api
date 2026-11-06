@@ -1,6 +1,7 @@
 const orderService = require('../services/orderService');
 const invoiceService = require('../services/invoiceService');
 const bankAccountService = require('../services/bankAccountService');
+const dtdcService = require('../services/dtdcService');
 
 exports.createOrder = async (req, res) => {
     try {
@@ -167,6 +168,19 @@ exports.updateOrderStatus = async (req, res) => {
                 }
             } else {
                 cancelledBy = 'customer';
+            }
+        }
+
+        // Automatic DTDC consignment booking when an order is updated to 'Shipped' without an existing AWB
+        if (status === 'Shipped' && (!order.tracking_number || order.tracking_number.startsWith('TRK-')) && !trackingNumber) {
+            try {
+                console.log(`[OrderController] Auto-booking DTDC shipment for order ${id}...`);
+                const shipmentResult = await dtdcService.createShipment(id);
+                console.log(`[OrderController] Auto-booked DTDC AWB: ${shipmentResult.trackingNumber}`);
+                const freshOrder = await orderService.getOrderById(id);
+                return res.status(200).json({ success: true, data: freshOrder });
+            } catch (shipErr) {
+                console.warn(`[OrderController] DTDC auto-booking on status change failed: ${shipErr.message}`);
             }
         }
 

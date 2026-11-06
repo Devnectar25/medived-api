@@ -142,6 +142,10 @@ exports.loginUser = async (email, password) => {
         throw new Error("Invalid email or password");
     }
 
+    if (user.active === false) {
+        throw new Error("This account has been closed. Please contact support if you need assistance.");
+    }
+
     if (user.contactno || user.emailid) {
         const otp = generateOTP();
         console.log(`[2FA] OTP for ${user.emailid}: ${otp}`);

@@ -118,3 +118,50 @@ exports.getProfile = async (req, res) => {
     }
 };
 
+
+
+exports.deleteAccount = async (req, res) => {
+    try {
+        const username = req.user.id;
+        const { reason } = req.body || {};
+
+        if (!username) {
+            return res.status(401).json({ success: false, message: 'User not identified' });
+        }
+
+        console.log(`[UserController] Processing account deletion request for user: ${username}, reason: ${reason || 'Not specified'}`);
+
+        // 1. Clear cart items
+        await pool.query("DELETE FROM cart_items WHERE user_id = $1", [username]).catch(e => console.warn('[deleteAccount] Clear cart:', e.message));
+
+        // 2. Clear wishlist
+        await pool.query("DELETE FROM wishlist WHERE user_id = $1", [username]).catch(e => console.warn('[deleteAccount] Clear wishlist:', e.message));
+
+        // 3. Clear saved user addresses
+        await pool.query("DELETE FROM user_addresses WHERE user_id = $1", [username]).catch(e => console.warn('[deleteAccount] Clear addresses:', e.message));
+
+        // 4. Anonymize and deactivate user account (preserves historical orders/invoices for tax and financial compliance)
+        const result = await pool.query(`
+            UPDATE public.users
+            SET active = false,
+                fullname = 'Closed Account',
+                contactno = NULL,
+                avatar_url = NULL,
+                password = 'ACCOUNT_DEACTIVATED_' || SUBSTRING(MD5(RANDOM()::TEXT), 1, 16)
+            WHERE username = $1
+            RETURNING username
+        `, [username]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'Your account and personal data have been removed and closed successfully.'
+        });
+    } catch (error) {
+        console.error('[UserController] deleteAccount Error:', error);
+        res.status(500).json({ success: false, message: 'Failed to delete account', error: error.message });
+    }
+};
