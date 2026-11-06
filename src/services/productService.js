@@ -44,10 +44,34 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
         whereClauses.push(`p.active = true`);
     }
 
-    if (search) {
-        whereClauses.push(`p.productname ILIKE $${paramIdx}`);
-        params.push(`%${search}%`);
-        paramIdx++;
+    if (search && search.toString().trim()) {
+        const cleanSearch = search.toString().trim();
+        const searchPattern = `%${cleanSearch}%`;
+        
+        // Extract numeric ID if search is pure number or prefixed like #464, ID-464, SKU-464
+        const numericMatch = cleanSearch.match(/^(?:id|sku|prod|product)?[\s\-#:]*(\d+)$/i);
+        const parsedId = numericMatch ? parseInt(numericMatch[1], 10) : null;
+
+        if (parsedId !== null && !isNaN(parsedId)) {
+            whereClauses.push(`(
+                p.product_id = $${paramIdx}
+                OR CAST(p.product_id AS TEXT) ILIKE $${paramIdx + 1}
+                OR p.productname ILIKE $${paramIdx + 1}
+                OR b.name ILIKE $${paramIdx + 1}
+                OR c.name ILIKE $${paramIdx + 1}
+            )`);
+            params.push(parsedId, searchPattern);
+            paramIdx += 2;
+        } else {
+            whereClauses.push(`(
+                p.productname ILIKE $${paramIdx}
+                OR CAST(p.product_id AS TEXT) ILIKE $${paramIdx}
+                OR b.name ILIKE $${paramIdx}
+                OR c.name ILIKE $${paramIdx}
+            )`);
+            params.push(searchPattern);
+            paramIdx++;
+        }
     }
 
     if (category_id) {
@@ -77,7 +101,13 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
 
     if (page && limit) {
         const offset = (page - 1) * limit;
-        const countQuery = `SELECT COUNT(*) FROM products p ${whereString}`;
+        const countQuery = `
+            SELECT COUNT(*) 
+            FROM products p 
+            LEFT JOIN category c ON p.category_id = c.category_id
+            LEFT JOIN brand b ON p.brand = b.brand_id
+            ${whereString}
+        `;
         const countResult = await pool.query(countQuery, params);
         const total = parseInt(countResult.rows[0].count);
 
@@ -178,9 +208,9 @@ exports.getFeaturedProducts = async (query) => {
         LEFT JOIN category c ON p.category_id = c.category_id
         LEFT JOIN brand b ON p.brand = b.brand_id
         LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
-        WHERE p.promoted = true AND p.active = true 
+        WHERE p.promoted = true AND p.active = true AND p.instock = true AND (COALESCE(p.stock_quantity, p.quantity, 0) > 0)
         ORDER BY p.updated_at DESC, p.product_id DESC
-        LIMIT 8
+        LIMIT 12
     `);
     return result.rows.map(mapProduct);
 };
@@ -482,6 +512,7 @@ exports.simpleChatbotSearch = async (query) => {
         LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
         WHERE p.active = true AND (
             p.productname ILIKE $1 OR 
+            CAST(p.product_id AS TEXT) ILIKE $1 OR 
             p.description ILIKE $1 OR
             c.name ILIKE $1 OR
             b.name ILIKE $1
