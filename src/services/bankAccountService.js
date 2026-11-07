@@ -48,13 +48,16 @@ const mapRow = (r) => ({
 });
 
 const normalize = (details = {}) => ({
-    holderName: String(details.holderName || '').trim(),
+    holderName: String(details.holderName || '').replace(/[^a-zA-Z\s]/g, '').trim(),
     accountNumber: String(details.accountNumber || '').replace(/\D/g, ''),
     ifscCode: String(details.ifscCode || '').trim().toUpperCase(),
 });
 
-const validate = ({ holderName, accountNumber, ifscCode }) => {
+const validate = ({ holderName, accountNumber, ifscCode }, rawHolderName) => {
     if (!holderName) return 'Account holder name is required';
+    if (rawHolderName && /\d/.test(rawHolderName)) return 'Account holder name must not contain numbers';
+    if (/\d/.test(holderName)) return 'Account holder name must not contain numbers';
+    if (!/^[a-zA-Z\s]+$/.test(holderName)) return 'Account holder name must only contain letters and spaces';
     if (accountNumber.length < 9 || accountNumber.length > 18) return 'Account number must be 9-18 digits';
     if (!IFSC_REGEX.test(ifscCode)) return 'Invalid IFSC code';
     return null;
@@ -103,7 +106,7 @@ exports.listAccounts = async (userId) => {
 exports.saveAccount = async (userId, rawDetails, { makeDefault = false } = {}) => {
     await ensureTable();
     const details = normalize(rawDetails);
-    const error = validate(details);
+    const error = validate(details, rawDetails?.holderName);
     if (error) {
         const err = new Error(error);
         err.statusCode = 400;
@@ -145,8 +148,9 @@ exports.saveAccount = async (userId, rawDetails, { makeDefault = false } = {}) =
 exports.rememberAccount = async (userId, rawDetails) => {
     try {
         if (!userId || !rawDetails) return;
+        if (rawDetails.holderName && /\d/.test(rawDetails.holderName)) return;
         const details = normalize(rawDetails);
-        if (validate(details)) return;
+        if (validate(details, rawDetails.holderName)) return;
         await exports.saveAccount(userId, details);
     } catch (e) {
         console.error('[BankAccounts] Failed to remember account:', e.message);

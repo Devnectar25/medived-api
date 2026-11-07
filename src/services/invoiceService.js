@@ -31,7 +31,25 @@ const getCurrencySymbol = () => {
  *  - replacement shipments (-REP orders) with status "Delivered"
  *  - legacy in-order replacements that reached the customer ("Replaced" / "Replacement Delivered")
  */
-const INVOICE_ELIGIBLE_STATUSES = ['Delivered', 'Replaced', 'Replacement Delivered', 'Return Rejected', 'Replace Rejected'];
+const isInvoiceEligibleStatus = (status) => {
+    if (!status) return false;
+    const s = String(status).trim().toLowerCase();
+    if (s === 'delivered' || s === 'replaced' || s === 'replacement delivered') return true;
+    if (s.includes('reject') || s.includes('denied') || s.includes('qa failed')) return true;
+    return false;
+};
+
+const INVOICE_ELIGIBLE_STATUSES = [
+    'Delivered', 
+    'Replaced', 
+    'Replacement Delivered', 
+    'Return Rejected', 
+    'Replace Rejected',
+    'Return Request Rejected',
+    'Replacement Request Rejected',
+    'Return QA Failed',
+    'Replace QA Failed'
+];
 
 const isItemCancelled = (item) => {
     if (!item) return false;
@@ -65,14 +83,14 @@ exports.isInvoiceEligible = (order) => {
     if (typeof items === 'string') { try { items = JSON.parse(items); } catch { items = []; } }
 
     const wasDelivered = Boolean(order.delivered_at) || 
-                         INVOICE_ELIGIBLE_STATUSES.includes(order.status) || 
+                         isInvoiceEligibleStatus(order.status) || 
                          order.is_replacement === true ||
-                         items.some(i => INVOICE_ELIGIBLE_STATUSES.includes(i.status));
+                         items.some(i => isInvoiceEligibleStatus(typeof i === 'string' ? i : i.status));
     if (!wasDelivered) return false;
 
     // Multi-item orders: if one item is returned, other delivered items stay with the customer.
     // An invoice is issued only if there is at least one active (kept) item that has NOT been returned or cancelled.
-    const hasKeptItems = items.some(i => !isItemReturnedOrCancelled(i.status));
+    const hasKeptItems = items.length === 0 ? true : items.some(i => !isItemReturnedOrCancelled(typeof i === 'string' ? i : (i.status || i)));
     return hasKeptItems;
 };
 

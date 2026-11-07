@@ -38,5 +38,9 @@ router.post('/:id/replacement/create-order', authorize('admin'), orderController
 router.post('/:id/qa-inspection', authorize('admin'), orderController.recordQaInspection);
 router.patch('/:id/restock', authorize('admin'), orderController.restockOrder);
 
+// Abandoned unpaid online order deletion (used when closing Razorpay window)
+router.delete('/:id/abandoned', orderController.deleteAbandonedOrder);
+router.post('/:id/abandon', orderController.deleteAbandonedOrder);
+
 module.exports = router;
 

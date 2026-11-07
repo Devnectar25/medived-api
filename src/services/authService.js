@@ -87,6 +87,9 @@ const deleteOtpRecord = async (cleanEmail) => {
 exports.registerUser = async (data) => {
     const { email, password, fullName, phone } = data;
     if (!email) throw new Error("Email is required");
+    if (fullName && /\d/.test(fullName)) {
+        throw new Error("Full name must not contain numeric characters");
+    }
     const cleanEmail = email.toString().trim().toLowerCase();
 
     let cleanPhone = phone ? phone.toString().trim().replace(/\D/g, '') : '';

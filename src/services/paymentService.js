@@ -43,12 +43,12 @@ exports.createRazorpayOrder = async (amount, currency, receipt, internalOrderId)
         const order = await rzp.orders.create(options);
         console.log('[DEBUG] Razorpay order created:', order.id);
 
-        // Update the internal order with the Razorpay Order ID
+        // Update internal order with Razorpay Order ID asynchronously so frontend can open modal immediately
         if (internalOrderId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(internalOrderId)) {
-            await pool.query(
+            pool.query(
                 `UPDATE orders SET razorpay_order_id = $1 WHERE id = $2`,
                 [order.id, internalOrderId]
-            );
+            ).catch(uErr => console.error('[DEBUG] Async razorpay_order_id update error:', uErr.message));
         }
 
 

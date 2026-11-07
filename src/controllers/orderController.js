@@ -398,3 +398,16 @@ exports.getOrderRefundCalculation = async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+
+
+exports.deleteAbandonedOrder = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user?.id || req.user?.username || null;
+        const result = await orderService.deleteAbandonedOrder(id, userId);
+        res.status(200).json(result);
+    } catch (error) {
+        console.error('[OrderController] deleteAbandonedOrder Error:', error);
+        res.status(400).json({ success: false, message: error.message || 'Failed to delete abandoned order' });
+    }
+};

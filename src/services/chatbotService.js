@@ -228,12 +228,15 @@ function localizeText(text, language) {
  * Returns false for queries that are clearly not product searches.
  */
 function isLikelyProductQuery(lowerQuery, tokens) {
-    // ── Pre-check: Ayurvedic Keywords ──
-    // If it contains a known Ayurvedic term, it's likely okay to search
+    // ── Pre-check: Ayurvedic & Wellness Keywords ──
+    // If it contains a known Ayurvedic or wellness term, it's definitely okay to search
     const ayurvedicTerms = [
         'ashwagandha', 'triphala', 'brahmi', 'shatavari', 'giloy', 'amla', 'shilajit', 
         'turmeric', 'haldi', 'curcumin', 'neem', 'tulsi', 'guggul', 'honey', 'capsule',
-        'tablet', 'syrup', 'oil', 'powder', 'churna', 'rasa', 'bhasma',
+        'tablet', 'syrup', 'oil', 'powder', 'churna', 'rasa', 'bhasma', 'energy', 'booster',
+        'boosters', 'vitality', 'care', 'fitness', 'gym', 'wellness', 'supplement', 'supplements',
+        'digestive', 'immunity', 'stress', 'sleep', 'hair', 'skin', 'liver', 'heart', 'joint',
+        'bone', 'diabetes', 'metabolism', 'juice', 'shots', 'tonic', 'capsules', 'tablets',
         'अश्वगंधा', 'त्रिफला', 'ब्राह्मी', 'शतावरी', 'गिलोय', 'आंवला', 'शिलाजीत', 'हल्दी', 'तुलसी', 'चूर्ण',
         'ਅਸ਼ਵਗੰਧਾ', 'ਤ੍ਰਿਫਲਾ', 'ਬ੍ਰਾਹਮੀ', 'ਸ਼ਤਾਵਰੀ', 'ਗਿਲੋਏ', 'ਆਮਲਾ', 'ਸ਼ਿਲਾਜੀਤ', 'ਹਲਦੀ', 'ਤੁਲਸੀ',
         'नींद', 'दर्द', 'पाचन', 'तनाव', 'ਚਿੰਤਾ', 'ਦਰਦ', 'ਨੀਂਦ',
@@ -249,9 +252,6 @@ function isLikelyProductQuery(lowerQuery, tokens) {
     const productIntents = ['product_search', 'product_info', 'product_listing', 'pricing_info', 'health_query'];
     const isExplicitProductIntent = productIntents.includes(intent);
 
-    // If it's a short query and not an explicit product intent or ayurvedic term, block it
-    if (tokens.length < 3 && !isExplicitProductIntent && !hasAyurvedicTerm) return false;
-
     // Patterns that signal a NON-product query — block product search for these
     const nonProductPatterns = [
         /who\s+(is|are|was|owns|founded|runs|leads)/i,
@@ -266,7 +266,10 @@ function isLikelyProductQuery(lowerQuery, tokens) {
         if (pattern.test(lowerQuery)) return false;
     }
 
-    return isExplicitProductIntent;
+    if (isExplicitProductIntent || hasAyurvedicTerm) return true;
+
+    // Default to allowing product search for keyword queries that aren't blocked
+    return tokens.length > 0;
 }
 
 /**
@@ -374,13 +377,13 @@ function detectProductListingIntent(query) {
         }
     }
 
-    // ── Direct single word listing (e.g. "ayurvedic", "herbal") ────────────────
-    const singleWords = q.split(/\s+/);
-    if (singleWords.length === 1 && !skipKeywords.has(singleWords[0]) && singleWords[0].length >= 3) {
-        // Check if it's a known intent like 'greeting' etc.
-        const { intent } = detectIntentFromTokens([singleWords[0]]);
-        if (intent === 'unknown' || intent === 'product_search') {
-            return { isListing: true, keyword: singleWords[0], isGeneral: false };
+    // ── Direct single / multi-word product or subcategory listing (e.g. "energy booster", "hair care", "ayurvedic") ────
+    const words = q.split(/\s+/).filter(w => w.length > 1);
+    if (words.length >= 1 && words.length <= 4 && words.every(w => !skipKeywords.has(w))) {
+        // Check if it's a known non-product intent
+        const { intent } = detectIntentFromTokens(words);
+        if (intent === 'unknown' || intent === 'product_search' || intent === 'product_listing') {
+            return { isListing: true, keyword: q, isGeneral: false };
         }
     }
 
@@ -1188,6 +1191,21 @@ exports.processSmartSearch = async (query, previousResults = []) => {
 
     // Clean up immediately for statelessness
     sessionStore.delete(sessionId);
+
+    // If query was unable to find products via NLP, fallback to direct search for customer search bar
+    if (!result.products || result.products.length === 0) {
+        try {
+            const fallbackProducts = await productService.simpleChatbotSearch(sanitizedQuery);
+            if (fallbackProducts && fallbackProducts.length > 0) {
+                return {
+                    answer: null,
+                    intent: 'product_search',
+                    confidence: 0.9,
+                    products: fallbackProducts
+                };
+            }
+        } catch (e) { }
+    }
 
     return result;
 };
