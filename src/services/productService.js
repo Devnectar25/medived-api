@@ -1,39 +1,48 @@
 const pool = require("../config/db");
 
 // Helper to map DB columns to camelCase frontend fields
-const mapProduct = (p) => ({
-    id: p.product_id?.toString() || '',
-    name: p.productname || '',
-    brand: p.brand_name || p.brand || 'Generic',
-    category: p.category_name || 'Uncategorized',
-    categoryId: p.category_id || '',
-    shortDescription: p.shortdescription || '',
-    description: p.description || '',
-    price: parseFloat(p.price) || 0,
-    originalPrice: parseFloat(p.originalprice) || 0,
-    discount: parseFloat(p.discount) || 0,
-    rating: parseFloat(p.rating) || 0,
-    reviews: parseInt(p.reviews) || 0,
-    image: p.image || 'https://via.placeholder.com/300',
-    images: p.product_images || [p.image || 'https://via.placeholder.com/300'], // Fallback to main image
-    inStock: p.instock,
-    stockQuantity: p.stock_quantity !== undefined && p.stock_quantity !== null ? p.stock_quantity : (p.quantity || 0),
-    benefits: p.benefits,
-    ingredients: p.ingredients,
-    usage: p.usage,
-    directions: p.directions,
-    storageInstructions: p.storage_instructions || p.storageinstructions || '',
-    medicineSize: p.medicine_size || p.medicinesize || '',
-    supports: p.supports || [],
-    expiryInfo: p.expiryinfo,
-    subCategory: p.subcategory_name || '', // Use joined name
-    subCategoryId: p.subcategory_id || '', // Keep ID for reference
-    specifications: p.specifications,
-    promoted: p.promoted || false,
-    active: p.active !== false, // Default true if null/undefined
-    gstRate: p.gst_rate !== undefined && p.gst_rate !== null ? parseFloat(p.gst_rate) : 0,
-    gst_rate: p.gst_rate !== undefined && p.gst_rate !== null ? parseFloat(p.gst_rate) : 0
-});
+const mapProduct = (p) => {
+    const rawStock = p.stock_quantity !== undefined && p.stock_quantity !== null 
+        ? parseInt(p.stock_quantity, 10) 
+        : (p.quantity !== undefined && p.quantity !== null ? parseInt(p.quantity, 10) : null);
+    const stockQuantity = rawStock !== null && !isNaN(rawStock) ? rawStock : 0;
+    // A product is ONLY in stock if both p.instock is true AND stock quantity is > 0 (or null/untracked)
+    const inStock = Boolean(p.instock) && (rawStock === null || isNaN(rawStock) || rawStock > 0);
+
+    return {
+        id: p.product_id?.toString() || '',
+        name: p.productname || '',
+        brand: p.brand_name || p.brand || 'Generic',
+        category: p.category_name || 'Uncategorized',
+        categoryId: p.category_id || '',
+        shortDescription: p.shortdescription || '',
+        description: p.description || '',
+        price: parseFloat(p.price) || 0,
+        originalPrice: parseFloat(p.originalprice) || 0,
+        discount: parseFloat(p.discount) || 0,
+        rating: parseFloat(p.rating) || 0,
+        reviews: parseInt(p.reviews) || 0,
+        image: p.image || 'https://via.placeholder.com/300',
+        images: p.product_images || [p.image || 'https://via.placeholder.com/300'], // Fallback to main image
+        inStock,
+        stockQuantity,
+        benefits: p.benefits,
+        ingredients: p.ingredients,
+        usage: p.usage,
+        directions: p.directions,
+        storageInstructions: p.storage_instructions || p.storageinstructions || '',
+        medicineSize: p.medicine_size || p.medicinesize || '',
+        supports: p.supports || [],
+        expiryInfo: p.expiryinfo,
+        subCategory: p.subcategory_name || '', // Use joined name
+        subCategoryId: p.subcategory_id || '', // Keep ID for reference
+        specifications: p.specifications,
+        promoted: p.promoted || false,
+        active: p.active !== false, // Default true if null/undefined
+        gstRate: p.gst_rate !== undefined && p.gst_rate !== null ? parseFloat(p.gst_rate) : 0,
+        gst_rate: p.gst_rate !== undefined && p.gst_rate !== null ? parseFloat(p.gst_rate) : 0
+    };
+};
 
 exports.getAllProducts = async (page, limit, active, search, category_id, brand_id, stock_status) => {
     let whereClauses = [];
@@ -44,10 +53,36 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
         whereClauses.push(`p.active = true`);
     }
 
-    if (search) {
-        whereClauses.push(`p.productname ILIKE $${paramIdx}`);
-        params.push(`%${search}%`);
-        paramIdx++;
+    if (search && search.toString().trim()) {
+        const cleanSearch = search.toString().trim();
+        const searchPattern = `%${cleanSearch}%`;
+        
+        // Extract numeric ID if search is pure number or prefixed like #464, ID-464, SKU-464
+        const numericMatch = cleanSearch.match(/^(?:id|sku|prod|product)?[\s\-#:]*(\d+)$/i);
+        const parsedId = numericMatch ? parseInt(numericMatch[1], 10) : null;
+
+        if (parsedId !== null && !isNaN(parsedId)) {
+            whereClauses.push(`(
+                p.product_id = $${paramIdx}
+                OR CAST(p.product_id AS TEXT) ILIKE $${paramIdx + 1}
+                OR p.productname ILIKE $${paramIdx + 1}
+                OR b.name ILIKE $${paramIdx + 1}
+                OR c.name ILIKE $${paramIdx + 1}
+                OR sc.name ILIKE $${paramIdx + 1}
+            )`);
+            params.push(parsedId, searchPattern);
+            paramIdx += 2;
+        } else {
+            whereClauses.push(`(
+                p.productname ILIKE $${paramIdx}
+                OR CAST(p.product_id AS TEXT) ILIKE $${paramIdx}
+                OR b.name ILIKE $${paramIdx}
+                OR c.name ILIKE $${paramIdx}
+                OR sc.name ILIKE $${paramIdx}
+            )`);
+            params.push(searchPattern);
+            paramIdx++;
+        }
     }
 
     if (category_id) {
@@ -77,7 +112,14 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
 
     if (page && limit) {
         const offset = (page - 1) * limit;
-        const countQuery = `SELECT COUNT(*) FROM products p ${whereString}`;
+        const countQuery = `
+            SELECT COUNT(*) 
+            FROM products p 
+            LEFT JOIN category c ON p.category_id = c.category_id
+            LEFT JOIN brand b ON p.brand = b.brand_id
+            LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
+            ${whereString}
+        `;
         const countResult = await pool.query(countQuery, params);
         const total = parseInt(countResult.rows[0].count);
 
@@ -88,7 +130,10 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
             LEFT JOIN brand b ON p.brand = b.brand_id
             LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
             ${whereString}
-            ORDER BY p.updated_at DESC, p.product_id DESC
+            ORDER BY 
+                CASE WHEN (p.instock = true AND COALESCE(p.stock_quantity, p.quantity, 0) > 0) THEN 0 ELSE 1 END ASC,
+                p.updated_at DESC, 
+                p.product_id DESC
             LIMIT $${paramIdx} OFFSET $${paramIdx + 1}
         `;
 
@@ -111,7 +156,10 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
         LEFT JOIN brand b ON p.brand = b.brand_id
         LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
         ${whereString}
-        ORDER BY p.updated_at DESC, p.product_id DESC
+        ORDER BY 
+            CASE WHEN (p.instock = true AND COALESCE(p.stock_quantity, p.quantity, 0) > 0) THEN 0 ELSE 1 END ASC,
+            p.updated_at DESC, 
+            p.product_id DESC
     `, params);
     return result.rows.map(mapProduct);
 };
@@ -178,9 +226,9 @@ exports.getFeaturedProducts = async (query) => {
         LEFT JOIN category c ON p.category_id = c.category_id
         LEFT JOIN brand b ON p.brand = b.brand_id
         LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
-        WHERE p.promoted = true AND p.active = true 
+        WHERE p.promoted = true AND p.active = true AND p.instock = true AND (COALESCE(p.stock_quantity, p.quantity, 0) > 0)
         ORDER BY p.updated_at DESC, p.product_id DESC
-        LIMIT 8
+        LIMIT 12
     `);
     return result.rows.map(mapProduct);
 };
@@ -276,13 +324,15 @@ exports.createProduct = async (product) => {
     } = product;
 
     const effectiveGstRate = gst_rate !== undefined ? parseFloat(gst_rate) : (gstRate !== undefined ? parseFloat(gstRate) : 0);
+    const effectiveStock = parseInt(quantity || 0, 10);
+    const effectiveInStock = Boolean(instock) && (isNaN(effectiveStock) || effectiveStock > 0);
 
     const result = await pool.query(
         `INSERT INTO products 
         (productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, stock_quantity, supports, product_images, expiryinfo, subcategory_id, specifications, active, storage_instructions, medicine_size, gst_rate, createdate, updated_at) 
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, NOW(), NOW()) 
         RETURNING *`,
-        [productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity || 0, supports || [], images || [], expiryinfo, subcategory_id, specifications, active !== false, storage_instructions !== undefined ? storage_instructions : (storageInstructions || ''), medicine_size !== undefined ? medicine_size : (medicineSize || ''), effectiveGstRate]
+        [productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, effectiveInStock, promoted, benefits, ingredients, usage, directions, quantity || 0, supports || [], images || [], expiryinfo, subcategory_id, specifications, active !== false, storage_instructions !== undefined ? storage_instructions : (storageInstructions || ''), medicine_size !== undefined ? medicine_size : (medicineSize || ''), effectiveGstRate]
     );
     return mapProduct(result.rows[0]);
 };
@@ -340,10 +390,16 @@ exports.updateProduct = async (id, product) => {
         }
     }
 
+    const effectiveStock = quantity !== undefined && quantity !== null ? parseInt(quantity, 10) : undefined;
+    const effectiveInStock = instock !== undefined 
+        ? (Boolean(instock) && (effectiveStock !== undefined && !isNaN(effectiveStock) ? effectiveStock > 0 : true)) 
+        : (effectiveStock !== undefined && !isNaN(effectiveStock) && effectiveStock <= 0 ? false : undefined);
+
     const result = await pool.query(
         `UPDATE products 
         SET productname = $2, description = $3, shortdescription = $4, price = $5, originalprice = $6, 
-            discount = $7, category_id = $8, brand = $9, image = $10, instock = $11, promoted = $12,
+            discount = $7, category_id = $8, brand = $9, image = $10, 
+            instock = COALESCE($11, instock), promoted = $12,
             benefits = COALESCE($13, benefits), ingredients = COALESCE($14, ingredients), 
             usage = COALESCE($15, usage), directions = COALESCE($16, directions),
             quantity = COALESCE($17, quantity), 
@@ -358,7 +414,7 @@ exports.updateProduct = async (id, product) => {
             updated_at = NOW()
         WHERE product_id = $1::integer 
         RETURNING *`,
-        [id, productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, instock, promoted, benefits, ingredients, usage, directions, quantity, supports, images, expiryinfo, subcategory_id, specifications, active, storage_instructions !== undefined ? storage_instructions : (storageInstructions !== undefined ? storageInstructions : null), medicine_size !== undefined ? medicine_size : (medicineSize !== undefined ? medicineSize : null), effectiveGstRate]
+        [id, productname, description, shortdescription, price, originalprice, discount, category_id, brand, image, effectiveInStock !== undefined ? effectiveInStock : (instock !== undefined ? instock : null), promoted, benefits, ingredients, usage, directions, quantity, supports, images, expiryinfo, subcategory_id, specifications, active, storage_instructions !== undefined ? storage_instructions : (storageInstructions !== undefined ? storageInstructions : null), medicine_size !== undefined ? medicine_size : (medicineSize !== undefined ? medicineSize : null), effectiveGstRate]
     );
     return result.rows[0] ? mapProduct(result.rows[0]) : null;
 };
@@ -469,7 +525,7 @@ exports.simpleChatbotSearch = async (query) => {
     let multiWordCondition = '';
     let multiWordParams = [];
     if (words.length > 1) {
-        const wordConditions = words.map((_, i) => `(p.productname ILIKE $${i + 3} OR p.description ILIKE $${i + 3} OR c.name ILIKE $${i + 3})`);
+        const wordConditions = words.map((_, i) => `(p.productname ILIKE $${i + 3} OR p.description ILIKE $${i + 3} OR c.name ILIKE $${i + 3} OR sc.name ILIKE $${i + 3} OR b.name ILIKE $${i + 3})`);
         multiWordCondition = `OR (${wordConditions.join(' AND ')})`;
         multiWordParams = words.map(w => `%${w}%`);
     }
@@ -482,12 +538,15 @@ exports.simpleChatbotSearch = async (query) => {
         LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
         WHERE p.active = true AND (
             p.productname ILIKE $1 OR 
+            CAST(p.product_id AS TEXT) ILIKE $1 OR 
             p.description ILIKE $1 OR
             c.name ILIKE $1 OR
+            sc.name ILIKE $1 OR
             b.name ILIKE $1
             ${multiWordCondition}
         )
         ORDER BY 
+            CASE WHEN (p.instock = true AND COALESCE(p.stock_quantity, p.quantity, 0) > 0) THEN 0 ELSE 1 END ASC,
             CASE 
                 -- Exact full product name match
                 WHEN LOWER(p.productname) = LOWER($2) THEN 1
@@ -496,16 +555,18 @@ exports.simpleChatbotSearch = async (query) => {
                 -- Full query appears in product name
                 WHEN p.productname ILIKE $1 THEN 3
                 ${words.length > 1 ? `WHEN (${words.map((_, i) => `p.productname ILIKE $${i + 3}`).join(' AND ')}) THEN 4` : ''}
+                -- Subcategory name matches
+                WHEN sc.name ILIKE $1 THEN 5
                 -- Category name matches
-                WHEN c.name ILIKE $1 THEN 5
+                WHEN c.name ILIKE $1 THEN 6
                 -- Brand name matches
-                WHEN b.name ILIKE $1 THEN 6
-                ${words.length > 1 ? `WHEN (${words.map((_, i) => `(p.productname ILIKE $${i + 3} OR p.description ILIKE $${i + 3})`).join(' AND ')}) THEN 7` : ''}
+                WHEN b.name ILIKE $1 THEN 7
+                ${words.length > 1 ? `WHEN (${words.map((_, i) => `(p.productname ILIKE $${i + 3} OR p.description ILIKE $${i + 3})`).join(' AND ')}) THEN 8` : ''}
                 -- Short description matches
-                WHEN p.shortdescription ILIKE $1 THEN 8
+                WHEN p.shortdescription ILIKE $1 THEN 9
                 -- General description matches
-                WHEN p.description ILIKE $1 THEN 9
-                ELSE 10
+                WHEN p.description ILIKE $1 THEN 10
+                ELSE 11
             END ASC,
             p.rating DESC NULLS LAST,
             p.productname ASC
@@ -600,6 +661,7 @@ exports.chatbotSearchByCategory = async (categoryName, limit = 10) => {
               OR sc.name ILIKE $1
           )
         ORDER BY 
+            CASE WHEN (p.instock = true AND COALESCE(p.stock_quantity, p.quantity, 0) > 0) THEN 0 ELSE 1 END ASC,
             CASE
                 WHEN c.name ILIKE $1 THEN 1
                 WHEN sc.name ILIKE $1 THEN 2

@@ -25,6 +25,8 @@ const DEFAULT_SETTINGS = {
 
 let inMemorySettings = { ...DEFAULT_SETTINGS };
 let hasInitializedTable = false;
+let lastSettingsFetchTime = 0;
+const SETTINGS_CACHE_TTL_MS = 60 * 1000; // 60-second in-memory cache to eliminate repeated DB hits during checkout
 
 const ensureTableExists = async () => {
     if (hasInitializedTable) return;
@@ -47,7 +49,12 @@ const ensureTableExists = async () => {
     }
 };
 
-exports.getSettings = async () => {
+exports.getSettings = async (forceRefresh = false) => {
+    const now = Date.now();
+    if (!forceRefresh && lastSettingsFetchTime && (now - lastSettingsFetchTime < SETTINGS_CACHE_TTL_MS)) {
+        return inMemorySettings;
+    }
+
     await ensureTableExists();
     try {
         const result = await pool.query(`SELECT key, value FROM store_settings WHERE key = 'store_config'`);
@@ -60,6 +67,7 @@ exports.getSettings = async () => {
                 codCharge: { ...DEFAULT_SETTINGS.codCharge, ...(result.rows[0].value.codCharge || {}) },
                 storefront: { ...DEFAULT_SETTINGS.storefront, ...(result.rows[0].value.storefront || {}) }
             };
+            lastSettingsFetchTime = now;
             return inMemorySettings;
         }
 
@@ -70,6 +78,7 @@ exports.getSettings = async () => {
              ON CONFLICT (key) DO NOTHING`,
             [JSON.stringify(DEFAULT_SETTINGS)]
         );
+        lastSettingsFetchTime = now;
         return inMemorySettings;
     } catch (error) {
         console.error('[settingsService] Error fetching store_settings, falling back to cache:', error.message);
@@ -99,6 +108,7 @@ exports.updateSettings = async (newConfig) => {
         );
 
         inMemorySettings = merged;
+        lastSettingsFetchTime = Date.now();
         return inMemorySettings;
     } catch (error) {
         console.error('[settingsService] Error updating store_settings:', error.message);

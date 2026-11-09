@@ -530,20 +530,21 @@ exports.trackShipment = async (trackingNumber) => {
                  WHERE tracking_number = $1 
                    AND status != 'Delivered'
                    AND status NOT IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'Refunded')
-                 RETURNING id, is_replacement, parent_order_id, order_number`,
+                 RETURNING id, is_replacement, parent_order_id, original_order_id, order_number`,
                 [trackingNumber]
             );
 
             if (deliveredRes.rows.length > 0) {
                 const delOrder = deliveredRes.rows[0];
-                if ((delOrder.is_replacement || delOrder.order_number?.endsWith('-REP')) && delOrder.parent_order_id) {
-                    console.log(`[DTDC] Replacement shipment delivered for tracking ${trackingNumber}. Syncing parent order ${delOrder.parent_order_id} to Replaced.`);
+                const targetParentId = delOrder.parent_order_id || delOrder.original_order_id;
+                if ((delOrder.is_replacement || delOrder.order_number?.endsWith('-REP')) && targetParentId) {
+                    console.log(`[DTDC] Replacement shipment delivered for tracking ${trackingNumber}. Syncing parent order ${targetParentId} to Replaced.`);
                     await pool.query(
                         `UPDATE order_items 
                          SET status = 'Replaced' 
                          WHERE order_id = $1::uuid 
                            AND (status ILIKE '%replace%' OR status = 'Received at Homved')`,
-                        [delOrder.parent_order_id]
+                        [targetParentId]
                     );
                     await pool.query(
                         `UPDATE orders 
@@ -552,7 +553,7 @@ exports.trackShipment = async (trackingNumber) => {
                              delivered_at = COALESCE(delivered_at, NOW()),
                              updated_at = NOW() 
                          WHERE id = $1::uuid`,
-                        [delOrder.parent_order_id]
+                        [targetParentId]
                     );
                 }
             }

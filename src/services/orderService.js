@@ -125,7 +125,46 @@ const resolveParentOrderStatus = (items, existingOrderStatus) => {
         }
 
         const hasReplace = activeCycleItems.some(i => (i.status || '').toLowerCase().includes('replace'));
-        return hasReplace ? 'Replacement Request Processing' : 'Return Request Processing';
+        if (hasReplace) {
+            const replaceCycleOrder = [
+                'Replace QA Passed',
+                'Replacement Out for Delivery',
+                'Replacement Shipped',
+                'Replacement Processing',
+                'Received at Homved',
+                'Replace In Transit',
+                'Replace Collected',
+                'Replace Out for Pickup',
+                'Replace Pickup Scheduled',
+                'Replace Approved',
+                'Replacement Request Processing',
+                'Replace Requested'
+            ];
+            for (const stage of replaceCycleOrder) {
+                if (activeCycleItems.some(i => (i.status || '').toLowerCase() === stage.toLowerCase())) {
+                    return stage;
+                }
+            }
+            return 'Replacement Request Processing';
+        }
+
+        const returnCycleOrder = [
+            'Return QA Passed',
+            'Received at Homved',
+            'Return In Transit',
+            'Return Collected',
+            'Return Out for Pickup',
+            'Return Pickup Scheduled',
+            'Return Approved',
+            'Return Request Processing',
+            'Return Requested'
+        ];
+        for (const stage of returnCycleOrder) {
+            if (activeCycleItems.some(i => (i.status || '').toLowerCase() === stage.toLowerCase())) {
+                return stage;
+            }
+        }
+        return 'Return Request Processing';
     }
 
     // 4. Pre-Delivery lifecycles: If some items are cancelled but forward active items remain,
@@ -245,6 +284,7 @@ exports.createOrder = async (orderData) => {
         }
 
         let totalOrderUnits = 0;
+        const prodIdList = [];
         for (const item of items) {
             const qty = parseInt(item.quantity, 10);
             const prodId = parseInt(item.id || item.productId, 10);
@@ -255,16 +295,24 @@ exports.createOrder = async (orderData) => {
                 throw new Error(`Maximum purchase limit is ${MAX_ITEM_QUANTITY} units per product. Item '${item.name || prodId}' requested ${qty} units.`);
             }
             totalOrderUnits += qty;
+            prodIdList.push(prodId);
+        }
 
-            // Atomic stock availability check with row lock
-            const prodStockRes = await client.query(
-                `SELECT product_id, productname, stock_quantity, instock FROM products WHERE product_id = $1 FOR UPDATE`,
-                [prodId]
-            );
-            if (prodStockRes.rows.length === 0) {
+        // Single batched atomic stock check with row lock (prevents N sequential DB roundtrips)
+        const prodStockRes = await client.query(
+            `SELECT product_id, productname, stock_quantity, instock FROM products WHERE product_id = ANY($1::integer[]) FOR UPDATE`,
+            [prodIdList]
+        );
+        const prodMap = new Map();
+        prodStockRes.rows.forEach(r => prodMap.set(parseInt(r.product_id, 10), r));
+
+        for (const item of items) {
+            const prodId = parseInt(item.id || item.productId, 10);
+            const qty = parseInt(item.quantity, 10);
+            const productRow = prodMap.get(prodId);
+            if (!productRow) {
                 throw new Error(`Product '${item.name || prodId}' not found.`);
             }
-            const productRow = prodStockRes.rows[0];
             const currentStock = parseInt(productRow.stock_quantity, 10) || 0;
             if (currentStock < qty || !productRow.instock) {
                 throw new Error(`Insufficient stock for '${productRow.productname}'. Requested: ${qty}, Available: ${currentStock}.`);
@@ -405,22 +453,15 @@ exports.createOrder = async (orderData) => {
                 [order.id, item.id || item.productId, item.name, item.price, item.quantity, item.image]
             );
 
-            const stockUpdateResult = await client.query(
+            await client.query(
                 `UPDATE products
                  SET stock_quantity = GREATEST(0, stock_quantity - $2),
                      quantity       = GREATEST(0, quantity - $2),
+                     instock        = CASE WHEN GREATEST(0, stock_quantity - $2) <= 0 THEN false ELSE instock END,
                      updated_at     = NOW()
-                 WHERE product_id = $1::integer
-                 RETURNING stock_quantity`,
+                 WHERE product_id = $1::integer`,
                 [item.id || item.productId, item.quantity]
             );
-
-            if (stockUpdateResult.rows[0]?.stock_quantity === 0) {
-                await client.query(
-                    `UPDATE products SET instock = false WHERE product_id = $1::integer`,
-                    [item.id || item.productId]
-                );
-            }
         }
 
         // ── STEP 5: Clear cart ─────────────────────────────────────────────────
@@ -456,15 +497,12 @@ exports.getAllOrders = async (options = {}) => {
     const hasSpecificSearch = Boolean(options.orderNumber || options.userName);
 
     if (type === 'potential') {
-        baseQuery += ` AND (o.payment_method != 'cod' AND o.payment_status = 'Pending')`;
-    } else if (type === 'successful') {
-        baseQuery += ` AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')`;
-    } else if (!type && !hasSpecificSearch) {
-        // By default when no specific search is active, show standard orders
-        // If paymentStatus is specifically set to 'Pending', do not restrict by cod
-        if (paymentStatus !== 'Pending') {
-            baseQuery += ` AND (o.payment_method = 'cod' OR o.payment_status != 'Pending')`;
-        }
+        baseQuery += ` AND (o.payment_method != 'cod' AND o.payment_status != 'Paid' AND (o.payment_type IS NULL OR o.payment_type != 'Paid'))`;
+    } else {
+        // Standard admin views, searches, and filters must ONLY display legitimate confirmed orders:
+        // COD orders or Online orders that were actually Paid.
+        // Completely excludes abandoned/unpaid online payment attempts.
+        baseQuery += ` AND (o.payment_method = 'cod' OR o.payment_status = 'Paid' OR o.payment_type = 'Paid')`;
     }
 
     const params = [];
@@ -757,22 +795,48 @@ exports.getOrdersByUser = async (userId) => {
             UPDATE orders p
             SET status = 'Replaced', logistics_status = 'Delivered', updated_at = NOW()
             FROM orders r
-            WHERE r.parent_order_id = p.id
+            WHERE (r.parent_order_id = p.id OR r.original_order_id = p.id)
               AND (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
               AND r.status = 'Delivered'
               AND p.user_id = $1
-              AND p.status NOT IN ('Replaced', 'Delivered')
+              AND p.status != 'Replaced'
         `, [userId]);
         await pool.query(`
             UPDATE order_items
             SET status = 'Replaced'
             WHERE order_id IN (
                 SELECT p.id FROM orders p
-                JOIN orders r ON r.parent_order_id = p.id
+                JOIN orders r ON (r.parent_order_id = p.id OR r.original_order_id = p.id)
                 WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
                   AND r.status = 'Delivered'
                   AND p.user_id = $1
             ) AND (status ILIKE '%replace%' OR status = 'Received at Homved')
+        `, [userId]);
+        // Auto-heal items in parent orders that were mistakenly marked 'Replaced' even though they were never replaced
+        await pool.query(`
+            UPDATE order_items p_item
+            SET status = 'Delivered'
+            WHERE p_item.status = 'Replaced'
+              AND p_item.return_reason IS NULL
+              AND p_item.order_id IN (
+                  SELECT p.id FROM orders p
+                  JOIN orders r ON (r.parent_order_id = p.id OR r.original_order_id = p.id OR r.order_number LIKE '%-REP')
+                  WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
+                    AND p.user_id = $1
+              )
+              AND p_item.id NOT IN (
+                  SELECT COALESCE(r_item.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                  FROM order_items r_item
+                  JOIN orders r ON r_item.order_id = r.id
+                  WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
+              )
+              AND p_item.product_id NOT IN (
+                  SELECT r_item.product_id
+                  FROM order_items r_item
+                  JOIN orders r ON r_item.order_id = r.id
+                  WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
+                    AND (r.parent_order_id = p_item.order_id OR r.original_order_id = p_item.order_id)
+              )
         `, [userId]);
     } catch (healErr) {
         // Non-blocking
@@ -797,6 +861,7 @@ exports.getOrdersByUser = async (userId) => {
          LEFT JOIN user_addresses a ON o.address_id = a.id
          LEFT JOIN users u ON o.user_id = u.username
          WHERE o.user_id = $1 
+           AND (o.payment_method = 'cod' OR o.payment_status = 'Paid' OR o.payment_type = 'Paid')
          ORDER BY o.created_at DESC`,
         [userId]
     );
@@ -811,22 +876,48 @@ exports.getOrderById = async (orderId) => {
             UPDATE orders p
             SET status = 'Replaced', logistics_status = 'Delivered', updated_at = NOW()
             FROM orders r
-            WHERE r.parent_order_id = p.id
+            WHERE (r.parent_order_id = p.id OR r.original_order_id = p.id)
               AND (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
               AND r.status = 'Delivered'
               AND (p.id::text = $1 OR p.order_number = $1)
-              AND p.status NOT IN ('Replaced', 'Delivered')
+              AND p.status != 'Replaced'
         `, [String(orderId)]);
         await pool.query(`
             UPDATE order_items
             SET status = 'Replaced'
             WHERE order_id IN (
                 SELECT p.id FROM orders p
-                JOIN orders r ON r.parent_order_id = p.id
+                JOIN orders r ON (r.parent_order_id = p.id OR r.original_order_id = p.id)
                 WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
                   AND r.status = 'Delivered'
                   AND (p.id::text = $1 OR p.order_number = $1)
             ) AND (status ILIKE '%replace%' OR status = 'Received at Homved')
+        `, [String(orderId)]);
+        // Auto-heal items in parent orders that were mistakenly marked 'Replaced' even though they were never replaced
+        await pool.query(`
+            UPDATE order_items p_item
+            SET status = 'Delivered'
+            WHERE p_item.status = 'Replaced'
+              AND p_item.return_reason IS NULL
+              AND p_item.order_id IN (
+                  SELECT p.id FROM orders p
+                  JOIN orders r ON (r.parent_order_id = p.id OR r.original_order_id = p.id OR r.order_number LIKE '%-REP')
+                  WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
+                    AND (p.id::text = $1 OR p.order_number = $1)
+              )
+              AND p_item.id NOT IN (
+                  SELECT COALESCE(r_item.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                  FROM order_items r_item
+                  JOIN orders r ON r_item.order_id = r.id
+                  WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
+              )
+              AND p_item.product_id NOT IN (
+                  SELECT r_item.product_id
+                  FROM order_items r_item
+                  JOIN orders r ON r_item.order_id = r.id
+                  WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
+                    AND (r.parent_order_id = p_item.order_id OR r.original_order_id = p_item.order_id)
+              )
         `, [String(orderId)]);
     } catch (healErr) {
         // Non-blocking
@@ -906,6 +997,12 @@ exports.requestReturnReplace = async (orderId, userId, data) => {
         if (isReturn) {
             if (!bankDetails || !bankDetails.ifscCode) {
                 throw new Error("Bank IFSC code is required for refunds");
+            }
+            if (!bankDetails.holderName || !bankDetails.holderName.toString().trim()) {
+                throw new Error("Account holder name is required for refunds");
+            }
+            if (/\d/.test(bankDetails.holderName)) {
+                throw new Error("Account holder name must not contain numbers");
             }
             const cleanIfsc = bankDetails.ifscCode.toString().trim().toUpperCase();
             if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanIfsc)) {
@@ -988,6 +1085,9 @@ exports.requestReturnReplace = async (orderId, userId, data) => {
  */
 exports.requestItemCancellation = async (orderId, userId, data, isAdmin = false) => {
     const { cancelReason, items: requestedItems, bankDetails } = data;
+    if (bankDetails && bankDetails.holderName && /\d/.test(bankDetails.holderName)) {
+        throw new Error("Account holder name must not contain numbers");
+    }
     console.log(`[OrderService] requestItemCancellation started for Order ${orderId}, Items: ${requestedItems?.length}`);
     const client = await pool.connect();
     try {
@@ -1088,19 +1188,19 @@ exports.getOrderStats = async () => {
     // Potential = Non-COD with payment NOT processed (Pending) — basically abandoned session
     const result = await pool.query(
         `SELECT 
-            COUNT(*) as total,
-            COUNT(*) FILTER (WHERE payment_method != 'cod' AND payment_status = 'Pending') as potential_users,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status NOT IN ('Cancelled', 'Returned', 'Refunded')) as active,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Pending') as pending,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Processing') as processing,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status IN ('Shipped', 'Confirmed')) as shipped,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Out for Delivery') as out_for_delivery,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status = 'Delivered') as delivered,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND status IN ('Cancelled', 'Returned', 'Refunded', 'Cancellation Requested', 'Return Requested', 'Return Approved', 'Return Rejected', 'Replace Requested', 'Replace Approved', 'Replace Rejected', 'Received at Homved', 'Restocked')) as canceled,
-            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status != 'Pending') AND payment_status = 'Pending' AND status NOT IN ('Cancelled', 'Returned', 'Refunded')) as pending_payment,
-            COUNT(*) FILTER (WHERE status = 'Return Request Processing') as return_requests,
-            COUNT(*) FILTER (WHERE status = 'Replacement Request Processing') as replacement_requests,
-            COUNT(*) FILTER (WHERE status IN ('Cancellation Requested', 'CANCEL_REQUESTED') OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED'))) as cancellation_requests
+            COUNT(*) FILTER (WHERE payment_method = 'cod' OR payment_status = 'Paid' OR payment_type = 'Paid') as total,
+            COUNT(*) FILTER (WHERE payment_method != 'cod' AND payment_status != 'Paid' AND (payment_type IS NULL OR payment_type != 'Paid')) as potential_users,
+            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status = 'Paid' OR payment_type = 'Paid') AND status NOT IN ('Cancelled', 'Returned', 'Refunded')) as active,
+            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status = 'Paid' OR payment_type = 'Paid') AND status = 'Pending') as pending,
+            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status = 'Paid' OR payment_type = 'Paid') AND status = 'Processing') as processing,
+            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status = 'Paid' OR payment_type = 'Paid') AND status IN ('Shipped', 'Confirmed')) as shipped,
+            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status = 'Paid' OR payment_type = 'Paid') AND status = 'Out for Delivery') as out_for_delivery,
+            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status = 'Paid' OR payment_type = 'Paid') AND status = 'Delivered') as delivered,
+            COUNT(*) FILTER (WHERE (payment_method = 'cod' OR payment_status = 'Paid' OR payment_type = 'Paid') AND status IN ('Cancelled', 'Returned', 'Refunded', 'Cancellation Requested', 'Return Requested', 'Return Approved', 'Return Rejected', 'Replace Requested', 'Replace Approved', 'Replace Rejected', 'Received at Homved', 'Restocked')) as canceled,
+            COUNT(*) FILTER (WHERE payment_method = 'cod' AND payment_status = 'Pending' AND status NOT IN ('Cancelled', 'Returned', 'Refunded')) as pending_payment,
+            COUNT(*) FILTER (WHERE status = 'Return Request Processing' AND (payment_method = 'cod' OR payment_status = 'Paid' OR payment_type = 'Paid')) as return_requests,
+            COUNT(*) FILTER (WHERE status = 'Replacement Request Processing' AND (payment_method = 'cod' OR payment_status = 'Paid' OR payment_type = 'Paid')) as replacement_requests,
+            COUNT(*) FILTER (WHERE (status IN ('Cancellation Requested', 'CANCEL_REQUESTED') OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED'))) AND (payment_method = 'cod' OR payment_status = 'Paid' OR payment_type = 'Paid')) as cancellation_requests
          FROM orders`
     );
 
@@ -1121,6 +1221,89 @@ exports.getOrderStats = async () => {
         cancellationRequests: parseInt(stats.cancellation_requests || 0),
         allRecordsCount: parseInt(stats.total) // total rows in DB
     };
+};
+
+/**
+ * Completely deletes an unpaid/abandoned online order from the database and restores stock and coupons.
+ * Used when a user closes/dismisses Razorpay payment modal or payment fails.
+ * Guarantees that unpaid orders do not appear in User Order History or Admin Panel.
+ */
+exports.deleteAbandonedOrder = async (orderId, userId = null) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        let checkQuery = `SELECT id, user_id, payment_method, payment_status, payment_type, coupon_code, coupon_id FROM orders WHERE id = $1::uuid`;
+        const checkParams = [orderId];
+        if (userId) {
+            checkQuery += ` AND (user_id = $2 OR $2 = 'guest' OR $2 = 'admin')`;
+            checkParams.push(userId);
+        }
+
+        const orderRes = await client.query(checkQuery, checkParams);
+        if (orderRes.rows.length === 0) {
+            await client.query('COMMIT');
+            return { success: true, message: 'Order not found or already removed' };
+        }
+
+        const order = orderRes.rows[0];
+
+        // Safety check: Never delete a paid order or COD order
+        if (order.payment_status === 'Paid' || order.payment_type === 'Paid' || order.payment_method === 'cod') {
+            await client.query('ROLLBACK');
+            throw new Error('Cannot delete a confirmed or paid order');
+        }
+
+        // 1. Restore product stock
+        const itemsRes = await client.query(
+            `SELECT product_id, quantity FROM order_items WHERE order_id = $1::uuid`,
+            [orderId]
+        );
+
+        for (const item of itemsRes.rows) {
+            const prodId = parseInt(item.product_id, 10);
+            const qty = parseInt(item.quantity, 10);
+            if (!isNaN(prodId) && !isNaN(qty) && qty > 0) {
+                await client.query(
+                    `UPDATE products
+                     SET stock_quantity = stock_quantity + $2,
+                         quantity       = quantity + $2,
+                         instock        = true,
+                         updated_at     = NOW()
+                     WHERE product_id = $1::integer`,
+                    [prodId, qty]
+                );
+            }
+        }
+
+        // 2. Restore coupon if used
+        if (order.coupon_code) {
+            try {
+                await couponService.restoreCouponUsage(client, order.coupon_code, order.coupon_id, order.user_id);
+            } catch (cErr) {
+                console.warn('[OrderService] Could not restore coupon for abandoned order:', cErr.message);
+            }
+        }
+
+        // 3. Delete order items
+        await client.query(`DELETE FROM order_items WHERE order_id = $1::uuid`, [orderId]);
+
+        // 4. Delete transactions (if any)
+        await client.query(`DELETE FROM transactions WHERE order_id = $1::uuid`, [orderId]);
+
+        // 5. Delete order record
+        await client.query(`DELETE FROM orders WHERE id = $1::uuid`, [orderId]);
+
+        await client.query('COMMIT');
+        console.log(`[OrderService] Successfully deleted abandoned unpaid order: ${orderId}`);
+        return { success: true, message: 'Abandoned order deleted and stock restored' };
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('[OrderService] Error deleting abandoned order:', error);
+        throw error;
+    } finally {
+        client.release();
+    }
 };
 
 exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDetails = null, paymentStatus = null, itemIds = null, cancelledBy = null, trackingNumber = null, reverseTrackingNumber = null) => {
@@ -1518,17 +1701,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             // Determine if the main order status should actually change
             let finalStatus = status;
             if (itemIds && itemIds.length > 0) {
-                // For partial updates, we usually want to keep the current order status 
-                // UNLESS everything else is now cancelled/refunded.
-                const checkRes = await client.query(
-                    `SELECT COUNT(*) as active_count FROM order_items 
-                     WHERE order_id = $1 AND status NOT IN ('Cancelled', 'Returned', 'Refunded', 'Replace Approved', $2)`,
-                    [orderId, status]
-                );
-                const activeCount = parseInt(checkRes.rows[0].active_count);
-                if (activeCount > 0) {
-                    finalStatus = oldOrder.status; // Keep existing status if other items are still active
-                }
+                const allItemsRes = await client.query('SELECT status FROM order_items WHERE order_id = $1', [orderId]);
+                finalStatus = resolveParentOrderStatus(allItemsRes.rows, oldOrder.status);
             }
 
             updateQuery = `UPDATE orders SET 
@@ -1717,11 +1891,11 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         OR status = ANY($2::text[]))`,
                     [orderId, [...RETURN_PICKUP_STAGES, 'Return Processing', 'Return QA Passed']]
                 );
-            } else if (status === 'Replaced') {
+            } else if (status === 'Replaced' || (status === 'Delivered' && (oldOrder.return_type === 'Replace' || (oldOrder.status && oldOrder.status.includes('Replace'))))) {
                 await client.query(
                     `UPDATE order_items
                      SET status = 'Replaced'
-                     WHERE order_id = $1 AND status = ANY($2::text[])`,
+                     WHERE order_id = $1 AND (status = ANY($2::text[]) OR status ILIKE '%replace%' OR status = 'Received at Homved')`,
                     [orderId, [...REPLACE_CYCLE_ITEM_STATUSES, 'Received at Homved']]
                 );
             } else if (status === 'Returned') {
@@ -1736,17 +1910,18 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
 
         // ── SYNC CHILD REPLACEMENT ORDER (-REP) TO PARENT ORDER ────────────────
         const isRepChildOrder = oldOrder.is_replacement === true || (oldOrder.order_number && oldOrder.order_number.endsWith('-REP'));
-        if (isRepChildOrder && oldOrder.parent_order_id) {
+        const targetParentOrderId = oldOrder.parent_order_id || oldOrder.original_order_id;
+        if (isRepChildOrder && targetParentOrderId) {
             if (status === 'Delivered') {
-                console.log(`[OrderSync] Replacement order ${orderId} delivered. Syncing parent order ${oldOrder.parent_order_id} to Replaced.`);
+                console.log(`[OrderSync] Replacement order ${orderId} delivered. Syncing parent order ${targetParentOrderId} to Replaced.`);
                 await client.query(
                     `UPDATE order_items 
                      SET status = 'Replaced' 
                      WHERE order_id = $1::uuid 
-                       AND (status ILIKE '%replace%' OR status = 'Received at Homved')`,
-                    [oldOrder.parent_order_id]
+                       AND (status ILIKE '%replace%' OR status = 'Received at Homved' OR status = 'Delivered')`,
+                    [targetParentOrderId]
                 );
-                const parentItemsRes = await client.query('SELECT * FROM order_items WHERE order_id = $1::uuid', [oldOrder.parent_order_id]);
+                const parentItemsRes = await client.query('SELECT * FROM order_items WHERE order_id = $1::uuid', [targetParentOrderId]);
                 const newParentStatus = resolveParentOrderStatus(parentItemsRes.rows, 'Replaced');
                 await client.query(
                     `UPDATE orders 
@@ -1755,25 +1930,25 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                          delivered_at = COALESCE(delivered_at, NOW()), 
                          updated_at = NOW() 
                      WHERE id = $1::uuid`,
-                    [oldOrder.parent_order_id, newParentStatus || 'Replaced']
+                    [targetParentOrderId, newParentStatus || 'Replaced']
                 );
             } else if (status === 'Shipped') {
                 await client.query(
                     `UPDATE orders SET status = 'Replacement Shipped', logistics_status = 'Shipped', updated_at = NOW() WHERE id = $1::uuid AND status NOT IN ('Replaced', 'Delivered')`,
-                    [oldOrder.parent_order_id]
+                    [targetParentOrderId]
                 );
                 await client.query(
                     `UPDATE order_items SET status = 'Replacement Shipped' WHERE order_id = $1::uuid AND (status ILIKE '%replace%' OR status = 'Received at Homved') AND status != 'Replaced'`,
-                    [oldOrder.parent_order_id]
+                    [targetParentOrderId]
                 );
             } else if (status === 'Out for Delivery') {
                 await client.query(
                     `UPDATE orders SET status = 'Replacement Out for Delivery', logistics_status = 'Out for Delivery', updated_at = NOW() WHERE id = $1::uuid AND status NOT IN ('Replaced', 'Delivered')`,
-                    [oldOrder.parent_order_id]
+                    [targetParentOrderId]
                 );
                 await client.query(
                     `UPDATE order_items SET status = 'Replacement Out for Delivery' WHERE order_id = $1::uuid AND (status ILIKE '%replace%' OR status = 'Received at Homved') AND status != 'Replaced'`,
-                    [oldOrder.parent_order_id]
+                    [targetParentOrderId]
                 );
             }
         }
@@ -2472,15 +2647,27 @@ exports.updateOrderItemStatus = async (orderId, itemId, status) => {
     }
 };
 
-exports.getOrderApprovalMode = async () => {
+let cachedApprovalMode = null;
+let lastApprovalModeTime = 0;
+const APPROVAL_MODE_TTL_MS = 60 * 1000;
+
+exports.getOrderApprovalMode = async (forceRefresh = false) => {
+    const now = Date.now();
+    if (!forceRefresh && cachedApprovalMode && (now - lastApprovalModeTime < APPROVAL_MODE_TTL_MS)) {
+        return cachedApprovalMode;
+    }
     try {
         const res = await pool.query(`SELECT value FROM app_settings WHERE key = 'order_approval_mode'`);
         if (res.rows.length > 0) {
-            return res.rows[0].value;
+            cachedApprovalMode = res.rows[0].value;
+            lastApprovalModeTime = now;
+            return cachedApprovalMode;
         }
     } catch (e) {
         console.error('Error fetching order_approval_mode:', e.message);
     }
+    cachedApprovalMode = 'automatic';
+    lastApprovalModeTime = now;
     return 'automatic';
 };
 
@@ -2492,6 +2679,8 @@ exports.setOrderApprovalMode = async (mode) => {
          ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
         [validMode]
     );
+    cachedApprovalMode = validMode;
+    lastApprovalModeTime = Date.now();
     return validMode;
 };
 
@@ -2670,9 +2859,9 @@ const createReplacementOrderTx = async (client, parentOrder) => {
                 item.id
             ]);
 
-            // Mark the original parent item row as 'Replaced'
+            // Mark the original parent item row as 'Replace QA Passed' (until the replacement shipment is delivered)
             await client.query(
-                `UPDATE order_items SET status = 'Replaced' WHERE id = $1`,
+                `UPDATE order_items SET status = 'Replace QA Passed' WHERE id = $1`,
                 [item.id]
             );
         }

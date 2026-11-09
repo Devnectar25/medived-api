@@ -87,6 +87,9 @@ const deleteOtpRecord = async (cleanEmail) => {
 exports.registerUser = async (data) => {
     const { email, password, fullName, phone } = data;
     if (!email) throw new Error("Email is required");
+    if (fullName && /\d/.test(fullName)) {
+        throw new Error("Full name must not contain numeric characters");
+    }
     const cleanEmail = email.toString().trim().toLowerCase();
 
     let cleanPhone = phone ? phone.toString().trim().replace(/\D/g, '') : '';
@@ -140,6 +143,10 @@ exports.loginUser = async (email, password) => {
 
     if (!user || !(await bcrypt.compare(password, user.password))) {
         throw new Error("Invalid email or password");
+    }
+
+    if (user.active === false) {
+        throw new Error("This account has been closed. Please contact support if you need assistance.");
     }
 
     if (user.contactno || user.emailid) {
