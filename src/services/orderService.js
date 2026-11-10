@@ -2480,7 +2480,7 @@ exports.reorderOrder = async (orderId, userId) => {
             `SELECT DISTINCT ON (oi.product_id) oi.product_id, oi.quantity as order_quantity, p.stock_quantity, p.instock, p.productname as name 
              FROM order_items oi
              JOIN products p ON oi.product_id::text = p.product_id::text
-             WHERE oi.order_id = $1 AND (oi.parent_item_id IS NULL OR oi.parent_item_id = '')`,
+             WHERE oi.order_id = $1 AND oi.parent_item_id IS NULL`,
             [orderId]
         );
 

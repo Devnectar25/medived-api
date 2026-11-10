@@ -28,6 +28,7 @@
         .item-returned .amount { text-decoration: line-through; }
         .badge-cancelled { display: inline-block; font-size: 10px; font-weight: 700; color: #d63031; background: #ffeaa7; padding: 2px 6px; border-radius: 4px; margin-left: 6px; text-decoration: none; vertical-align: middle; }
         .badge-returned { display: inline-block; font-size: 10px; font-weight: 700; color: #e67e22; background: #fdebd0; padding: 2px 6px; border-radius: 4px; margin-left: 6px; text-decoration: none; vertical-align: middle; }
+        .badge-replaced { display: inline-block; font-size: 10px; font-weight: 700; color: #6c5ce7; background: #f3edfc; padding: 2px 6px; border-radius: 4px; margin-left: 6px; text-decoration: none; vertical-align: middle; }
 
         /* Totals */
         .summary-container { display: flex; justify-content: flex-end; margin-top: 30px; }
@@ -92,6 +93,12 @@
                         {{#if this.isReturned}}
                         <span class="badge-returned">RETURNED</span>
                         {{/if}}
+                        {{#if this.isReplaced}}
+                        <span class="badge-replaced">REPLACED</span>
+                        {{/if}}
+                        {{#if this.replacementOrderNumber}}
+                        <div style="font-size: 11px; color: #6c5ce7; margin-top: 3px; font-weight: 500;">Replacement Shipment: #{{this.replacementOrderNumber}}</div>
+                        {{/if}}
                     </td>
                     <td class="text-right">{{currencySymbol}}{{this.price}}</td>
                     <td class="text-right">{{this.quantity}}</td>
@@ -100,6 +107,8 @@
                         <span style="color: #d63031; font-weight: 600; font-size: 11px;">Cancelled</span>
                         {{else if this.isReturned}}
                         <span style="color: #e67e22; font-weight: 600; font-size: 11px;">Returned</span>
+                        {{else if this.isReplaced}}
+                        <span style="color: #6c5ce7; font-weight: 600; font-size: 11px;">Replaced</span>
                         {{else}}
                         <span style="color: #10ac84; font-weight: 600; font-size: 11px;">Delivered</span>
                         {{/if}}
@@ -155,6 +164,12 @@
                 <tr class="grand-total"><td>Total Amount</td><td class="text-right">{{currencySymbol}}{{grandTotal}}</td></tr>
             </table>
         </div>
+
+        {{#if hasReplacement}}
+        <div style="margin-top: 25px; padding: 12px 16px; background: #f8f6fc; border-left: 4px solid #6c5ce7; border-radius: 6px; font-size: 12px; color: #4b3f72; line-height: 1.5;">
+            <strong>Replacement Delivery Information:</strong> The replacement item(s) have been verified and delivered successfully{{#if replacementChildNumber}} under shipment <strong>#{{replacementChildNumber}}</strong>{{/if}}.
+        </div>
+        {{/if}}
 
         <div class="footer-grid">
             <div class="bank-info">
