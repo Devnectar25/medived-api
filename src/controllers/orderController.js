@@ -205,11 +205,12 @@ exports.downloadInvoice = async (req, res) => {
         }
 
         // Invoices exist only for successfully delivered orders
-        // (regular orders and replacement shipments once they reach the customer)
-        if (!invoiceService.isInvoiceEligible(order)) {
+        // (regular orders and replacement shipments once they reach the customer, and replacement is completed)
+        const eligible = await invoiceService.isInvoiceEligible(order);
+        if (!eligible) {
             return res.status(400).json({
                 success: false,
-                message: 'Invoice is available only after the order has been delivered successfully.'
+                message: 'Invoice is available only after the order (and any replacement) has been delivered successfully.'
             });
         }
 

@@ -77,19 +77,66 @@ const isItemReturned = (item) => {
 const isItemReturnedOrCancelled = (item) => {
     return isItemCancelled(item) || isItemReturned(item);
 };
-exports.isInvoiceEligible = (order) => {
+exports.isInvoiceEligible = async (order) => {
     if (!order) return false;
     let items = order.items || [];
     if (typeof items === 'string') { try { items = JSON.parse(items); } catch { items = []; } }
 
+    const isReplacement = order.is_replacement === true;
+
+    // 1. If it's a replacement shipment (-REP order), it MUST be delivered to customer
+    if (isReplacement) {
+        return isInvoiceEligibleStatus(order.status) || Boolean(order.delivered_at);
+    }
+
+    // 2. Check if the parent order or its items are currently undergoing replacement
+    const isStatusInReplacementProgress = (status) => {
+        if (!status) return false;
+        const s = String(status).trim().toLowerCase();
+        if (s === 'delivered' || s === 'replaced' || s === 'replacement delivered') return false;
+        if (s.includes('reject') || s.includes('denied') || s.includes('qa failed')) return false;
+        if (s.includes('replace') || s.includes('replacement') || s === 'received at homved') return true;
+        return false;
+    };
+
+    if (isStatusInReplacementProgress(order.status)) {
+        return false;
+    }
+    if (items.some(i => isStatusInReplacementProgress(typeof i === 'string' ? i : i.status))) {
+        return false;
+    }
+    if ((order.return_type === 'Replace' || order.returnType === 'Replace') && 
+        !['replaced', 'replacement delivered', 'delivered'].includes(String(order.status).toLowerCase())) {
+        return false;
+    }
+
+    // 3. Check if there is an active (undelivered) replacement child order in DB
+    try {
+        const repRes = await pool.query(`
+            SELECT status, logistics_status FROM orders
+            WHERE (parent_order_id = $1 OR original_order_id = $1)
+              AND (is_replacement = TRUE OR order_number LIKE '%-REP')
+            ORDER BY created_at DESC LIMIT 1
+        `, [order.id]);
+        if (repRes.rows.length > 0) {
+            const childStatus = (repRes.rows[0].status || '').toLowerCase();
+            const childLogistics = (repRes.rows[0].logistics_status || '').toLowerCase();
+            const isChildDelivered = childStatus === 'delivered' || childLogistics === 'delivered' || childStatus === 'replaced';
+            if (!isChildDelivered) {
+                return false; // Replacement product not delivered yet!
+            }
+        }
+    } catch (e) {
+        console.warn('Error checking child replacement status in isInvoiceEligible:', e);
+    }
+
+    // 4. Must have been delivered originally
     const wasDelivered = Boolean(order.delivered_at) || 
                          isInvoiceEligibleStatus(order.status) || 
-                         order.is_replacement === true ||
                          items.some(i => isInvoiceEligibleStatus(typeof i === 'string' ? i : i.status));
     if (!wasDelivered) return false;
 
-    // Multi-item orders: if one item is returned, other delivered items stay with the customer.
-    // An invoice is issued only if there is at least one active (kept) item that has NOT been returned or cancelled.
+    // 5. Must have at least one active item (not cancelled or returned)
     const hasKeptItems = items.length === 0 ? true : items.some(i => !isItemReturnedOrCancelled(typeof i === 'string' ? i : (i.status || i)));
     return hasKeptItems;
 };
@@ -211,6 +258,24 @@ exports.generateInvoiceHTML = async (orderId) => {
         const value = items.reduce((s, i) => s + i.lineTotal, 0);
         replacementData = { items, value, parentNumber };
     }
+
+    let replacementChildNumber = '';
+    if (!isReplacement) {
+        try {
+            const repRes = await pool.query(
+                `SELECT order_number, status FROM orders
+                 WHERE (parent_order_id = $1 OR original_order_id = $1)
+                   AND (is_replacement = TRUE OR order_number LIKE '%-REP')
+                 ORDER BY created_at DESC LIMIT 1`,
+                [order.id]
+            );
+            if (repRes.rows.length > 0) {
+                replacementChildNumber = repRes.rows[0].order_number || '';
+            }
+        } catch (e) {
+            console.warn('Error fetching replacement child order number:', e);
+        }
+    }
     
     // 4. Load the logo and convert to base64
     let logoBase64 = '';
@@ -308,6 +373,13 @@ exports.generateInvoiceHTML = async (orderId) => {
         items: rawItems.map(item => {
             const isCancelled = isItemCancelled(item);
             const isReturned = isItemReturned(item);
+            const itemStatus = String(item.status || '').trim().toLowerCase();
+            const isReplaced = !isCancelled && !isReturned && (
+                itemStatus === 'replaced' || 
+                itemStatus === 'replacement delivered' ||
+                String(order.status || '').toLowerCase() === 'replaced' ||
+                (Boolean(replacementChildNumber) && itemStatus.includes('replace'))
+            );
             const price = parseFloat(item.price) || 0;
             const qty = parseInt(item.quantity) || 1;
             return {
@@ -317,10 +389,14 @@ exports.generateInvoiceHTML = async (orderId) => {
                 total: (price * qty).toFixed(2),
                 isCancelled,
                 isReturned,
-                isDelivered: !isCancelled && !isReturned,
-                statusBadge: isCancelled ? 'CANCELLED' : (isReturned ? 'RETURNED' : 'DELIVERED')
+                isReplaced,
+                replacementOrderNumber: isReplaced ? replacementChildNumber : '',
+                isDelivered: !isCancelled && !isReturned && !isReplaced,
+                statusBadge: isCancelled ? 'CANCELLED' : (isReturned ? 'RETURNED' : (isReplaced ? 'REPLACED' : 'DELIVERED'))
             };
         }),
+        hasReplacement: Boolean(replacementChildNumber) || rawItems.some(i => (i.status || '').toLowerCase().includes('replace')),
+        replacementChildNumber: replacementChildNumber,
         originalSubtotal: originalSubtotal.toFixed(2),
         hasAdjustments,
         hasCancellationAdjustment,
