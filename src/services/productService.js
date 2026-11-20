@@ -1,5 +1,7 @@
 const pool = require("../config/db");
 
+const DEFAULT_PRODUCT_IMAGE = 'https://bluwgwdnohqyqvzyymcs.supabase.co/storage/v1/object/public/mediveda/products/default-ayurvedic-product-1795173243689.jpg';
+
 // Helper to map DB columns to camelCase frontend fields
 const mapProduct = (p) => {
     const rawStock = p.stock_quantity !== undefined && p.stock_quantity !== null 
@@ -8,6 +10,11 @@ const mapProduct = (p) => {
     const stockQuantity = rawStock !== null && !isNaN(rawStock) ? rawStock : 0;
     // A product is ONLY in stock if both p.instock is true AND stock quantity is > 0 (or null/untracked)
     const inStock = Boolean(p.instock) && (rawStock === null || isNaN(rawStock) || rawStock > 0);
+
+    const mainImage = (p.image && !p.image.includes('placeholder')) ? p.image : DEFAULT_PRODUCT_IMAGE;
+    const productImages = (p.product_images && p.product_images.length > 0 && !p.product_images[0].includes('placeholder'))
+        ? p.product_images
+        : [mainImage];
 
     return {
         id: p.product_id?.toString() || '',
@@ -22,8 +29,8 @@ const mapProduct = (p) => {
         discount: parseFloat(p.discount) || 0,
         rating: parseFloat(p.rating) || 0,
         reviews: parseInt(p.reviews) || 0,
-        image: p.image || 'https://via.placeholder.com/300',
-        images: p.product_images || [p.image || 'https://via.placeholder.com/300'], // Fallback to main image
+        image: mainImage,
+        images: productImages,
         inStock,
         stockQuantity,
         benefits: p.benefits,

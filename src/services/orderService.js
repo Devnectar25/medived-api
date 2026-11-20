@@ -638,24 +638,42 @@ exports.getCancelledOrders = async (options = {}) => {
     let baseQuery = `FROM orders o 
                      LEFT JOIN users u ON o.user_id = u.username 
                      LEFT JOIN user_addresses a ON o.address_id = a.id 
-                     WHERE (
-                        o.status IN ('CANCEL_REQUESTED', 'Cancelled', 'Refunded', 'Cancellation Requested', 'Returned', 'Received at Homved', 'Return Request Processing', 'Return Approved', 'Return Rejected', 'Return Processing', 'Return Collected', 'Restocked', 'Partially Returning', 'Return Requested')
-                        OR o.is_returned_order = TRUE
-                        OR o.return_type IS NOT NULL
-                        OR EXISTS (
-                            SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND (
-                                oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED', 'Return Requested', 'Return Request Processing', 'Replace Requested', 'Replacement Request Processing', 'Returned', 'Return Approved', 'Refunded', 'Cancelled', 'Received at Homved', 'Restocked', 'Return Processing')
-                                OR oi.status LIKE 'Return%'
+                     WHERE (o.is_replacement IS NOT TRUE AND COALESCE(o.return_type, '') != 'Replace' AND o.order_number NOT LIKE '%-REP')
+                     AND (
+                        -- 1. Pre-delivery cancellations:
+                        (
+                            o.status IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED')
+                            AND (
+                                (LOWER(o.payment_method) != 'cod' AND o.payment_status IN ('Paid', 'Refunded'))
+                                OR o.refund_status IS NOT NULL
                             )
                         )
-                     )
-                     AND (
-                        (LOWER(o.payment_method) != 'cod' AND o.payment_status IN ('Paid', 'Refunded'))
-                        OR o.is_returned_order = TRUE
-                        OR o.return_type IS NOT NULL
-                        OR o.status LIKE 'Return%' 
-                        OR o.status IN ('Returned', 'Refunded', 'Received at Homved', 'Restocked', 'Partially Returning')
-                        OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND (oi.status LIKE 'Return%' OR oi.status LIKE 'Replace%' OR oi.status IN ('Returned', 'Refunded', 'Received at Homved', 'Restocked')))
+                        OR
+                        -- 2. Returns: ONLY AFTER QA PASS!
+                        (
+                            (
+                                o.qa_status = 'Passed' 
+                                OR o.status = 'Return QA Passed'
+                                OR (o.status IN ('Returned', 'Refunded') AND COALESCE(o.qa_status, '') != 'Failed')
+                            )
+                            AND o.status NOT IN (
+                                'Return Requested', 'Return Request Processing', 'Return Approved', 
+                                'Return Processing', 'Return Pickup Scheduled', 'Return Out for Pickup', 
+                                'Return Collected', 'Return In Transit', 'Received at Homved', 
+                                'Return QA Failed', 'Return Rejected'
+                            )
+                            AND COALESCE(o.qa_status, '') != 'Failed'
+                            AND NOT EXISTS (
+                                SELECT 1 FROM order_items oi 
+                                WHERE oi.order_id = o.id 
+                                  AND oi.status IN (
+                                      'Return Requested', 'Return Request Processing', 'Return Approved', 
+                                      'Return Processing', 'Return Pickup Scheduled', 'Return Out for Pickup', 
+                                      'Return Collected', 'Return In Transit', 'Received at Homved', 
+                                      'Return QA Failed', 'Return Rejected'
+                                  )
+                            )
+                        )
                      )`;
 
     if (searchTerm) {
@@ -772,18 +790,32 @@ exports.getCancelledOrdersStats = async () => {
     const result = await pool.query(
         `SELECT 
             COUNT(*) FILTER (
-                WHERE (status IN ('CANCEL_REQUESTED', 'Cancelled', 'Refunded', 'Cancellation Requested', 'Returned', 'Received at Homved', 'Return Request Processing', 'Return Approved', 'Return Rejected', 'Return Processing', 'Return Collected', 'Restocked', 'Partially Returning', 'Return Requested')
-                OR is_returned_order = TRUE
-                OR return_type IS NOT NULL
-                OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND (oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED', 'Returned', 'Return Approved', 'Refunded', 'Cancelled', 'Return Request Processing', 'Return Requested', 'Return Processing') OR oi.status LIKE 'Return%'))
-                ) AND (LOWER(payment_method) != 'cod' OR is_returned_order = TRUE OR return_type IS NOT NULL OR status LIKE 'Return%' OR status IN ('Returned', 'Refunded', 'Received at Homved', 'Partially Returning'))
+                WHERE (o.is_replacement IS NOT TRUE AND COALESCE(o.return_type, '') != 'Replace' AND o.order_number NOT LIKE '%-REP')
+                  AND (
+                    (o.status IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED') AND ((LOWER(o.payment_method) != 'cod' AND o.payment_status IN ('Paid', 'Refunded')) OR o.refund_status IS NOT NULL))
+                    OR
+                    (
+                      (o.qa_status = 'Passed' OR o.status = 'Return QA Passed' OR (o.status IN ('Returned', 'Refunded') AND COALESCE(o.qa_status, '') != 'Failed'))
+                      AND o.status NOT IN ('Return Requested', 'Return Request Processing', 'Return Approved', 'Return Processing', 'Return Pickup Scheduled', 'Return Out for Pickup', 'Return Collected', 'Return In Transit', 'Received at Homved', 'Return QA Failed', 'Return Rejected')
+                      AND COALESCE(o.qa_status, '') != 'Failed'
+                    )
+                  )
             ) as total_cancelled,
             COUNT(*) FILTER (
-                WHERE (refund_status = 'Pending' OR refund_status IS NULL) 
-                AND payment_status NOT IN ('Failed', 'Cancelled')
-                AND ((LOWER(payment_method) != 'cod' AND payment_status IN ('Paid', 'Refunded')) OR is_returned_order = TRUE OR return_type IS NOT NULL OR status LIKE 'Return%' OR status IN ('Returned', 'Refunded', 'Received at Homved', 'Partially Returning'))
+                WHERE (o.is_replacement IS NOT TRUE AND COALESCE(o.return_type, '') != 'Replace' AND o.order_number NOT LIKE '%-REP')
+                  AND (o.refund_status = 'Pending' OR o.refund_status IS NULL) 
+                  AND o.payment_status NOT IN ('Failed', 'Cancelled')
+                  AND (
+                    (o.status IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED') AND ((LOWER(o.payment_method) != 'cod' AND o.payment_status IN ('Paid', 'Refunded')) OR o.refund_status IS NOT NULL))
+                    OR
+                    (
+                      (o.qa_status = 'Passed' OR o.status = 'Return QA Passed' OR (o.status IN ('Returned', 'Refunded') AND COALESCE(o.qa_status, '') != 'Failed'))
+                      AND o.status NOT IN ('Return Requested', 'Return Request Processing', 'Return Approved', 'Return Processing', 'Return Pickup Scheduled', 'Return Out for Pickup', 'Return Collected', 'Return In Transit', 'Received at Homved', 'Return QA Failed', 'Return Rejected')
+                      AND COALESCE(o.qa_status, '') != 'Failed'
+                    )
+                  )
             ) as pending_refunds
-         FROM orders`
+         FROM orders o`
     );
     return result.rows[0];
 };
