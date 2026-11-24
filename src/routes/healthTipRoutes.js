@@ -1,11 +1,16 @@
 const express = require("express");
 const router = express.Router();
+const { cachePublic, invalidateOnWrite } = require('../middlewares/publicCache');
+
+const LIST_TTL = 30 * 1000;
+
+router.use(invalidateOnWrite);
 const healthTipController = require("../controllers/healthTipController");
 
-router.get("/", healthTipController.getAll);
-router.get("/active", healthTipController.getActive);
-router.get("/home", healthTipController.getHome);
-router.get("/:id", healthTipController.getById);
+router.get("/", cachePublic(LIST_TTL), healthTipController.getAll);
+router.get("/active", cachePublic(LIST_TTL), healthTipController.getActive);
+router.get("/home", cachePublic(LIST_TTL), healthTipController.getHome);
+router.get("/:id", cachePublic(LIST_TTL), healthTipController.getById);
 router.post("/", healthTipController.create);
 router.put("/:id", healthTipController.update);
 router.delete("/:id", healthTipController.delete);

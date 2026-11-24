@@ -1,4 +1,12 @@
 const pool = require("../config/db");
+const TtlCache = require("../utils/ttlCache");
+const publicCache = require("../middlewares/publicCache");
+
+// Shared product searches used by the chatbot and the search bar
+const searchCache = new TtlCache({ ttlMs: 30 * 1000, maxEntries: 300 });
+publicCache.onClear(() => searchCache.clear());
+// Callers get their own copies so the cached rows are never modified
+const cachedSearch = async (key, load) => (await searchCache.get(key, load)).map((product) => ({ ...product }));
 
 // Helper to map DB columns to camelCase frontend fields
 const mapProduct = (p) => {
@@ -112,24 +120,18 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
 
     if (page && limit) {
         const offset = (page - 1) * limit;
-        const countQuery = `
-            SELECT COUNT(*) 
-            FROM products p 
-            LEFT JOIN category c ON p.category_id = c.category_id
-            LEFT JOIN brand b ON p.brand = b.brand_id
-            LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
-            ${whereString}
-        `;
-        const countResult = await pool.query(countQuery, params);
-        const total = parseInt(countResult.rows[0].count);
-
-        const dataQuery = `
-            SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name
+        const fromClause = `
             FROM products p
             LEFT JOIN category c ON p.category_id = c.category_id
             LEFT JOIN brand b ON p.brand = b.brand_id
             LEFT JOIN subcategory sc ON p.subcategory_id = sc.srno
             ${whereString}
+        `;
+
+        const dataQuery = `
+            SELECT p.*, c.name as category_name, b.name as brand_name, sc.name as subcategory_name,
+                   COUNT(*) OVER() as total_count
+            ${fromClause}
             ORDER BY 
                 CASE WHEN (p.instock = true AND COALESCE(p.stock_quantity, p.quantity, 0) > 0) THEN 0 ELSE 1 END ASC,
                 p.updated_at DESC, 
@@ -139,6 +141,11 @@ exports.getAllProducts = async (page, limit, active, search, category_id, brand_
 
         const dataParams = [...params, limit, offset];
         const result = await pool.query(dataQuery, dataParams);
+
+        // A page past the end returns no rows, so the total has to be counted separately
+        const total = result.rows.length > 0 || offset === 0
+            ? parseInt(result.rows[0]?.total_count || 0)
+            : parseInt((await pool.query(`SELECT COUNT(*) ${fromClause}`, params)).rows[0].count);
 
         return {
             data: result.rows.map(mapProduct),
@@ -293,28 +300,7 @@ exports.getRelatedProducts = async (productId, category, limit = 4) => {
 };
 
 
-let hasCheckedGstCol = false;
-const ensureProductGstCol = async () => {
-    if (hasCheckedGstCol) return;
-    try {
-        await pool.query(`
-            DO $ 
-            BEGIN 
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns 
-                    WHERE table_name = 'products' AND column_name = 'gst_rate'
-                ) THEN 
-                    ALTER TABLE products ADD COLUMN gst_rate NUMERIC(5, 2) DEFAULT 0;
-                END IF;
-            END $;
-        `);
-        hasCheckedGstCol = true;
-    } catch (e) {
-        // Continue safely
-    }
-};
 exports.createProduct = async (product) => {
-    await ensureProductGstCol();
     const {
         productname, description, shortdescription, price, originalprice,
         discount, category_id: category_id, brand, image, instock, promoted,
@@ -364,7 +350,6 @@ const getFolderFromUrl = (url) => {
 };
 
 exports.updateProduct = async (id, product) => {
-    await ensureProductGstCol();
     const {
         productname, description, shortdescription, price, originalprice,
         discount, category_id: category_id, brand, image, instock, promoted,
@@ -574,8 +559,10 @@ exports.simpleChatbotSearch = async (query) => {
     `;
 
     const allParams = [searchPattern, trimmed, ...multiWordParams];
-    const result = await pool.query(sql, allParams);
-    return result.rows.map(mapProduct);
+    return cachedSearch(`search:${trimmed.toLowerCase()}`, async () => {
+        const result = await pool.query(sql, allParams);
+        return result.rows.map(mapProduct);
+    });
 };
 
 exports.chatbotSearchProducts = async (query) => {
@@ -597,8 +584,10 @@ exports.chatbotSearchByPrice = async (maxPrice) => {
         LIMIT 20
     `;
 
-    const result = await pool.query(sql, [maxPrice]);
-    return result.rows.map(mapProduct);
+    return cachedSearch(`max:${maxPrice}`, async () => {
+        const result = await pool.query(sql, [maxPrice]);
+        return result.rows.map(mapProduct);
+    });
 };
 
 /**
@@ -616,8 +605,10 @@ exports.chatbotSearchByPriceAbove = async (minPrice) => {
         LIMIT 20
     `;
 
-    const result = await pool.query(sql, [minPrice]);
-    return result.rows.map(mapProduct);
+    return cachedSearch(`min:${minPrice}`, async () => {
+        const result = await pool.query(sql, [minPrice]);
+        return result.rows.map(mapProduct);
+    });
 };
 
 /**
@@ -635,8 +626,10 @@ exports.chatbotGetProducts = async (limit = 10) => {
         ORDER BY p.promoted DESC, p.rating DESC NULLS LAST, p.updated_at DESC
         LIMIT $1
     `;
-    const result = await pool.query(sql, [limit]);
-    return result.rows.map(mapProduct);
+    return cachedSearch(`top:${limit}`, async () => {
+        const result = await pool.query(sql, [limit]);
+        return result.rows.map(mapProduct);
+    });
 };
 
 /**
@@ -675,8 +668,10 @@ exports.chatbotSearchByCategory = async (categoryName, limit = 10) => {
             p.productname ASC
         LIMIT $2
     `;
-    const result = await pool.query(sql, [searchPattern, limit]);
-    return result.rows.map(mapProduct);
+    return cachedSearch(`category:${limit}:${categoryName.trim().toLowerCase()}`, async () => {
+        const result = await pool.query(sql, [searchPattern, limit]);
+        return result.rows.map(mapProduct);
+    });
 };
 
 

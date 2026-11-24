@@ -6,10 +6,9 @@ process.on('uncaughtException', (err) => {
     process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('CRITICAL STARTUP ERROR - UNHANDLED REJECTION! 💥');
-    console.error(reason);
-    process.exit(1);
+process.on('unhandledRejection', (reason) => {
+    // Log and keep serving: one failed background task must not drop everyone's requests
+    console.error('UNHANDLED REJECTION:', reason);
 });
 
 console.log('--- STARTING HOMEVED API ---');

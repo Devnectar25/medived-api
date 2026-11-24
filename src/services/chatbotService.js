@@ -1,5 +1,10 @@
 const pool = require('../config/db');
 const productService = require('./productService');
+const TtlCache = require('../utils/ttlCache');
+const { createWriteBuffer } = require('../utils/writeBuffer');
+
+const knowledgeCache = new TtlCache({ ttlMs: 60 * 1000, maxEntries: 500 });
+const countCache = new TtlCache({ ttlMs: 60 * 1000 });
 
 /**
  * Chatbot Service — Enhanced NLP Pipeline
@@ -413,17 +418,6 @@ async function logUnansweredQuery(query, suggestedIntent = 'unknown') {
 
 async function logProductClick(productId, productName, sessionId = 'default') {
     try {
-        // Create table if not exists (for this specific story)
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS chatbot_product_clicks (
-                id SERIAL PRIMARY KEY,
-                product_id VARCHAR(50) NOT NULL,
-                product_name TEXT,
-                session_id VARCHAR(100),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-
         const sql = `
             INSERT INTO chatbot_product_clicks (product_id, product_name, session_id)
             VALUES ($1, $2, $3)
@@ -753,7 +747,7 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
         }
 
         if (listingIntent.isGeneral) {
-            await logUnansweredQuery(sanitizedQuery, 'product_listing');
+            logUnansweredQuery(sanitizedQuery, 'product_listing');
             return {
                 answer: language === 'hi' 
                     ? "क्षमा करें, हमारे पास अभी उत्पाद उपलब्ध नहीं हैं।" 
@@ -809,7 +803,7 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
 
     if (isHowMany && mentionsProducts && !mentionsCategories) {
         try {
-            const countRes = await pool.query('SELECT COUNT(*) FROM products WHERE active = true');
+            const countRes = await countCache.get('products', () => pool.query('SELECT COUNT(*) FROM products WHERE active = true'));
             const total = countRes.rows[0].count;
             return {
                 answer: language === 'hi'
@@ -824,9 +818,9 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
 
     if (isHowMany && mentionsCategories) {
         try {
-            const countRes = await pool.query('SELECT COUNT(*) FROM category WHERE active = true');
+            const countRes = await countCache.get('categories', () => pool.query('SELECT COUNT(*) FROM category WHERE active = true'));
             const total = countRes.rows[0].count;
-            const namesRes = await pool.query('SELECT name FROM category WHERE active = true ORDER BY name LIMIT 6');
+            const namesRes = await countCache.get('categoryNames', () => pool.query('SELECT name FROM category WHERE active = true ORDER BY name LIMIT 6'));
             const names = namesRes.rows.map(r => r.name).join(', ');
             return {
                 answer: language === 'hi'
@@ -950,7 +944,10 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
         LIMIT 1
     `;
     try {
-        const knowledgeResult = await pool.query(knowledgeSql, [sanitizedQuery, shadowQuery]);
+        const knowledgeResult = await knowledgeCache.get(
+            `${sanitizedQuery}\n${shadowQuery}`,
+            () => pool.query(knowledgeSql, [sanitizedQuery, shadowQuery])
+        );
 
         if (knowledgeResult.rows.length > 0) {
             const entry = knowledgeResult.rows[0];
@@ -965,10 +962,7 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
             }
 
             // Increment usage count asynchronously
-            pool.query(
-                'UPDATE chatbot_knowledge SET usage_count = usage_count + 1, updated_at = NOW() WHERE id = $1',
-                [entry.id]
-            ).catch(() => { });
+            knowledgeUsage.push(entry.id);
 
             let products = [];
             // Use the provided keyword from DB, or extract from query if it's long enough.
@@ -1121,7 +1115,7 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
     }
 
     // ── Stage 11: Fallback — always answer, never leave unanswered ────────────
-    await logUnansweredQuery(sanitizedQuery, detectedIntent);
+    logUnansweredQuery(sanitizedQuery, detectedIntent);
 
     return {
         answer: language === 'hi'
@@ -1134,22 +1128,6 @@ exports.processQuery = async (query, sessionId = 'default', language = 'en') => 
         products: []
     };
 };
-
-/**
- * Log queries that didn't get a specific match to a database table for review.
- */
-async function logUnansweredQuery(query, intent) {
-    try {
-        const sql = `
-            INSERT INTO unanswered_queries (query_text, detected_intent, created_at)
-            VALUES ($1, $2, NOW())
-        `;
-        await pool.query(sql, [query, intent]);
-    } catch (err) {
-        // Silently fail if table doesn't exist or other DB error
-        console.error('Log unanswered query error:', err.message);
-    }
-}
 
 // ─── Smart Search Wrapper ───────────────────────────────────────────────────
 
@@ -1195,7 +1173,7 @@ exports.processSmartSearch = async (query, previousResults = []) => {
     // If query was unable to find products via NLP, fallback to direct search for customer search bar
     if (!result.products || result.products.length === 0) {
         try {
-            const fallbackProducts = await productService.simpleChatbotSearch(sanitizedQuery);
+            const fallbackProducts = await productService.simpleChatbotSearch(query.trim());
             if (fallbackProducts && fallbackProducts.length > 0) {
                 return {
                     answer: null,
@@ -1212,23 +1190,27 @@ exports.processSmartSearch = async (query, previousResults = []) => {
 
 // ─── Query Logger ──────────────────────────────────────────────────────────────
 
-exports.logQuery = async (data) => {
-    const { userQuery, matchedPattern, intent, response, confidence, wasSuccessful, sessionId } = data;
-    try {
-        const sql = `
-            INSERT INTO chatbot_query_logs 
-            (user_query, matched_pattern, intent, response, confidence_score, was_successful, session_id, needs_review)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        `;
-        const needsReview = !wasSuccessful || confidence < 0.5;
-        await pool.query(sql, [
-            userQuery, matchedPattern, intent, response,
-            confidence, wasSuccessful, sessionId, needsReview
-        ]);
-    } catch (err) {
-        console.error('Query logging error:', err.message);
-    }
-};
+const queryLog = createWriteBuffer('chatbot query log', (rows) => {
+    const column = (name) => rows.map((row) => row[name]);
+    return pool.query(
+        `INSERT INTO chatbot_query_logs
+         (user_query, matched_pattern, intent, response, confidence_score, was_successful, session_id, needs_review)
+         SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::numeric[], $6::boolean[], $7::text[], $8::boolean[])`,
+        ['userQuery', 'matchedPattern', 'intent', 'response', 'confidence', 'wasSuccessful', 'sessionId', 'needsReview'].map(column)
+    );
+});
+
+const knowledgeUsage = createWriteBuffer('chatbot knowledge usage', (ids) => pool.query(
+    `UPDATE chatbot_knowledge k SET usage_count = k.usage_count + u.uses, updated_at = NOW()
+     FROM (SELECT id, COUNT(*)::int AS uses FROM unnest($1::integer[]) AS id GROUP BY id) u
+     WHERE k.id = u.id`,
+    [ids]
+));
+
+exports.logQuery = (data) => queryLog.push({
+    ...data,
+    needsReview: !data.wasSuccessful || data.confidence < 0.5
+});
 
 // ─── Exports for testing ───────────────────────────────────────────────────────
 exports.logProductClick = logProductClick;

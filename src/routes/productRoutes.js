@@ -1,5 +1,11 @@
 const express = require('express');
 const router = express.Router();
+const { cachePublic, invalidateOnWrite } = require('../middlewares/publicCache');
+
+const LIST_TTL = 30 * 1000;
+const ITEM_TTL = 10 * 1000;
+
+router.use(invalidateOnWrite);
 
 const productController = require('../controllers/productController');
 const multer = require('multer');
@@ -21,22 +27,22 @@ router.get('/import-history', productController.getImportHistory);
 router.delete('/import-history/:id', productController.deleteImportHistory);
 
 // GET /api/products
-router.get('/', productController.getProducts);
+router.get('/', cachePublic(LIST_TTL), productController.getProducts);
 
 // GET /api/products/featured
-router.get('/featured', productController.getFeaturedProducts);
+router.get('/featured', cachePublic(LIST_TTL), productController.getFeaturedProducts);
 
 // GET /api/products/search
-router.get('/search', productController.searchProducts);
+router.get('/search', cachePublic(LIST_TTL), productController.searchProducts);
 
 // POST /api/products/smart-search
 router.post('/smart-search', productController.smartSearch);
 
 // GET /api/products/:id
-router.get('/:id', productController.getProduct);
+router.get('/:id', cachePublic(ITEM_TTL), productController.getProduct);
 
 // GET /api/products/:id/related
-router.get('/:id/related', productController.getRelatedProducts);
+router.get('/:id/related', cachePublic(LIST_TTL), productController.getRelatedProducts);
 
 // POST /api/products/bulk-status
 router.post('/bulk-status', productController.bulkUpdateProductStatus);

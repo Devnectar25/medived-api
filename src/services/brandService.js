@@ -63,17 +63,19 @@ exports.getAllBrands = async (optionsOrPage, maybeLimit, maybeSearch, maybeSortB
         const parsedLimit = Math.max(1, parseInt(limit) || 10);
         const offset = (parsedPage - 1) * parsedLimit;
 
-        const countResult = await pool.query(`SELECT COUNT(*) FROM brand ${whereString}`, params);
-        const total = parseInt(countResult.rows[0]?.count || 0);
-
         const dataParams = [...params, parsedLimit, offset];
         const dataResult = await pool.query(
-            `SELECT * FROM brand ${whereString} ${orderClause} LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
+            `SELECT *, COUNT(*) OVER() AS total_count FROM brand ${whereString} ${orderClause} LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
             dataParams
         );
 
+        // A page past the end returns no rows, so the total has to be counted separately
+        const total = dataResult.rows.length > 0 || offset === 0
+            ? parseInt(dataResult.rows[0]?.total_count || 0)
+            : parseInt((await pool.query(`SELECT COUNT(*) FROM brand ${whereString}`, params)).rows[0].count);
+
         return {
-            data: dataResult.rows,
+            data: dataResult.rows.map(({ total_count, ...row }) => row),
             total,
             page: parsedPage,
             limit: parsedLimit,

@@ -46,22 +46,17 @@ exports.getWishlistCount = async (userId) => {
 };
 
 exports.toggleWishlist = async (userId, productId) => {
-    const checkResult = await pool.query(
-        'SELECT * FROM wishlist WHERE user_id = $1 AND product_id = $2::integer',
+    // Removes the item if present, otherwise adds it, in one statement
+    const result = await pool.query(
+        `WITH removed AS (
+             DELETE FROM wishlist WHERE user_id = $1 AND product_id = $2::integer RETURNING 1
+         ), added AS (
+             INSERT INTO wishlist (user_id, product_id)
+             SELECT $1, $2::integer WHERE NOT EXISTS (SELECT 1 FROM removed)
+             ON CONFLICT (user_id, product_id) DO NOTHING
+         )
+         SELECT NOT EXISTS (SELECT 1 FROM removed) AS added`,
         [userId, productId]
     );
-
-    if (checkResult.rows.length > 0) {
-        await pool.query(
-            'DELETE FROM wishlist WHERE user_id = $1 AND product_id = $2::integer',
-            [userId, productId]
-        );
-        return { added: false };
-    } else {
-        await pool.query(
-            'INSERT INTO wishlist (user_id, product_id) VALUES ($1, $2::integer)',
-            [userId, productId]
-        );
-        return { added: true };
-    }
+    return { added: result.rows[0].added };
 };

@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const bcrypt = require('bcryptjs');
+const passwords = require('../utils/password');
 const jwt = require('jsonwebtoken');
 const homvedOtp = require('./homvedOtpService');
 
@@ -22,6 +22,11 @@ const resetKey = (mobile) => `password_reset:${mobile}`;
 
 const saveOtpRecord = async (cleanEmail, record) => {
     otpStore.set(cleanEmail, record);
+    // Abandoned logins are never verified or deleted, so drop expired sessions now and then
+    if (otpStore.size > 1000) {
+        const now = Date.now();
+        for (const [key, saved] of otpStore) if (saved.expires < now) otpStore.delete(key);
+    }
     try {
         await pool.query(
             `INSERT INTO verification_otps (email, otp, type, expires_at, registration_data, user_data)
@@ -88,7 +93,7 @@ const deleteOtpRecord = async (cleanEmail) => {
 // Numbers are stored in mixed formats and are not unique, so this can return several users.
 const findUsersByMobile = async (mobile) => {
     const result = await pool.query(
-        "SELECT * FROM public.users WHERE regexp_replace(contactno, '\\D', '', 'g') IN ($1::text, '91' || $1::text)",
+        "SELECT username, emailid, password, contactno, active, fullname FROM public.users WHERE regexp_replace(contactno, '\\D', '', 'g') IN ($1::text, '91' || $1::text)",
         [mobile]
     );
     return result.rows;
@@ -108,19 +113,24 @@ exports.registerUser = async (data) => {
     }
 
     // Check if user already exists
-    const existingUser = await pool.query("SELECT * FROM public.users WHERE LOWER(emailid) = $1 OR LOWER(username) = $1", [cleanEmail]);
-    if (existingUser.rows.length > 0) {
+    const existing = await pool.query(
+        `SELECT (LOWER(emailid) = $1 OR LOWER(username) = $1) AS same_email, active
+         FROM public.users
+         WHERE LOWER(emailid) = $1 OR LOWER(username) = $1
+            OR regexp_replace(contactno, '\\D', '', 'g') IN ($2::text, '91' || $2::text)`,
+        [cleanEmail, cleanPhone]
+    );
+    if (existing.rows.some((u) => u.same_email)) {
         throw new Error("Email already registered");
     }
 
     // Mobile number is the login identifier, so new accounts must not reuse one
-    if ((await findUsersByMobile(cleanPhone)).some((u) => u.active !== false)) {
+    if (existing.rows.some((u) => u.active !== false)) {
         throw new Error("Mobile number already registered");
     }
 
     // Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    const hashedPassword = await passwords.hash(password);
 
     await homvedOtp.sendOtp(cleanPhone, 'registration');
 
@@ -155,7 +165,7 @@ exports.loginUser = async (mobileNo, password) => {
     // Existing accounts can share a number; the password decides which one is logging in
     const matches = [];
     for (const candidate of await findUsersByMobile(mobile)) {
-        if (candidate.password && await bcrypt.compare(password, candidate.password)) {
+        if (candidate.password && await passwords.compare(password, candidate.password)) {
             matches.push(candidate);
         }
     }
@@ -322,7 +332,7 @@ exports.loginAdmin = async (username, password, ipAddress) => {
 
     console.log(`[authService] DB lookup result: ${result.rowCount > 0 ? 'found' : 'not found'}`);
 
-    if (!adminRow || !(await bcrypt.compare(password, adminRow.password))) {
+    if (!adminRow || !(await passwords.compare(password, adminRow.password))) {
         console.log(`[authService] Invalid credentials check`);
         if (adminRow && adminRow.password === password) {
             console.log(`[authService] Plain password matched (fallback)`);
@@ -429,8 +439,7 @@ exports.resetPasswordWithOtp = async (mobileNo, otp, newPassword) => {
     await homvedOtp.verifyOtp(sessionMobile(record), 'password_reset', cleanOtp);
 
     // Hash new password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(newPassword, salt);
+    const hashedPassword = await passwords.hash(newPassword);
 
     // Update in database
     await pool.query(

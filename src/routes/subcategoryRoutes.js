@@ -1,10 +1,15 @@
 const express = require('express');
 const router = express.Router();
+const { cachePublic, invalidateOnWrite } = require('../middlewares/publicCache');
+
+const LIST_TTL = 30 * 1000;
+
+router.use(invalidateOnWrite);
 const subcategoryController = require('../controllers/subcategoryController');
 
-router.get('/', subcategoryController.getSubcategories);
-router.get('/active', subcategoryController.getActiveSubcategories);
-router.get('/:id', subcategoryController.getSubcategoryById);
+router.get('/', cachePublic(LIST_TTL), subcategoryController.getSubcategories);
+router.get('/active', cachePublic(LIST_TTL), subcategoryController.getActiveSubcategories);
+router.get('/:id', cachePublic(LIST_TTL), subcategoryController.getSubcategoryById);
 router.post('/', subcategoryController.createSubcategory);
 router.put('/:id', subcategoryController.updateSubcategory);
 router.delete('/:id', subcategoryController.deleteSubcategory);

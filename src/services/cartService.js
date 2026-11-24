@@ -96,17 +96,20 @@ exports.clearCart = async (userId) => {
 exports.syncCart = async (userId, localItems) => {
     if (!localItems || !Array.isArray(localItems)) return;
 
-    for (const item of localItems) {
-        // HOM-129: Ensure sync respects stock
-        await pool.query(
-            `INSERT INTO cart_items (user_id, product_id, quantity, updated_at)
-             SELECT $1, $2, LEAST(10, LEAST($3, p.stock_quantity)), NOW()
-             FROM products p WHERE p.product_id = $2
-             ON CONFLICT (user_id, product_id)
-             DO UPDATE SET 
-                quantity = LEAST(10, LEAST(EXCLUDED.quantity, (SELECT stock_quantity FROM products WHERE product_id = cart_items.product_id))), 
-                updated_at = NOW()`,
-            [userId, item.id, item.quantity]
-        );
-    }
+    // One statement for the whole cart; the last entry wins if a product is listed twice
+    const quantities = new Map();
+    for (const item of localItems) quantities.set(parseInt(item.id, 10), parseInt(item.quantity, 10));
+    const rows = [...quantities].filter(([id, quantity]) => !isNaN(id) && !isNaN(quantity));
+    if (rows.length === 0) return;
+
+    // HOM-129: Ensure sync respects stock
+    await pool.query(
+        `INSERT INTO cart_items (user_id, product_id, quantity, updated_at)
+         SELECT $1, p.product_id, LEAST(10, l.quantity, p.stock_quantity), NOW()
+         FROM unnest($2::integer[], $3::integer[]) AS l(product_id, quantity)
+         JOIN products p ON p.product_id = l.product_id
+         ON CONFLICT (user_id, product_id)
+         DO UPDATE SET quantity = EXCLUDED.quantity, updated_at = NOW()`,
+        [userId, rows.map((r) => r[0]), rows.map((r) => r[1])]
+    );
 };
