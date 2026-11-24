@@ -1,6 +1,7 @@
 const pool = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const homvedOtp = require('./homvedOtpService');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_key';
 const JWT_EXPIRES_IN = '24h';
@@ -11,12 +12,13 @@ const generateToken = (id, role) => {
     });
 };
 
-// In-memory OTP cache + Database persistence
+// Pending verification sessions (who is verifying and what for), cached in memory and
+// persisted in the database. The OTP itself lives only with the Homved OTP API.
 const otpStore = new Map();
+const SESSION_TTL_MS = 10 * 60 * 1000;
 
-const generateOTP = () => {
-    return Math.floor(100000 + Math.random() * 900000).toString();
-};
+// Password reset sessions are keyed by mobile number, login/registration ones by email.
+const resetKey = (mobile) => `password_reset:${mobile}`;
 
 const saveOtpRecord = async (cleanEmail, record) => {
     otpStore.set(cleanEmail, record);
@@ -33,8 +35,8 @@ const saveOtpRecord = async (cleanEmail, record) => {
                  created_at = NOW()`,
             [
                 cleanEmail,
-                record.otp,
-                record.type || 'login',
+                '', // legacy NOT NULL column; the code is held by Homved and never stored here
+                record.type,
                 record.expires,
                 record.registrationData ? JSON.stringify(record.registrationData) : null,
                 record.userData ? JSON.stringify(record.userData) : null
@@ -58,7 +60,6 @@ const getOtpRecord = async (cleanEmail) => {
             if (dbRes.rows.length > 0) {
                 const row = dbRes.rows[0];
                 record = {
-                    otp: row.otp,
                     expires: parseInt(row.expires_at, 10),
                     type: row.type,
                     registrationData: row.registration_data,
@@ -84,6 +85,15 @@ const deleteOtpRecord = async (cleanEmail) => {
 
 // --- USER AUTH ---
 
+// Numbers are stored in mixed formats and are not unique, so this can return several users.
+const findUsersByMobile = async (mobile) => {
+    const result = await pool.query(
+        "SELECT * FROM public.users WHERE regexp_replace(contactno, '\\D', '', 'g') IN ($1::text, '91' || $1::text)",
+        [mobile]
+    );
+    return result.rows;
+};
+
 exports.registerUser = async (data) => {
     const { email, password, fullName, phone } = data;
     if (!email) throw new Error("Email is required");
@@ -92,11 +102,8 @@ exports.registerUser = async (data) => {
     }
     const cleanEmail = email.toString().trim().toLowerCase();
 
-    let cleanPhone = phone ? phone.toString().trim().replace(/\D/g, '') : '';
-    if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
-        cleanPhone = cleanPhone.slice(2);
-    }
-    if (!cleanPhone || !/^[6-9]\d{9}$/.test(cleanPhone)) {
+    const cleanPhone = homvedOtp.normalizeMobile(phone);
+    if (!cleanPhone) {
         throw new Error("Please enter a valid 10-digit mobile number");
     }
 
@@ -106,17 +113,20 @@ exports.registerUser = async (data) => {
         throw new Error("Email already registered");
     }
 
+    // Mobile number is the login identifier, so new accounts must not reuse one
+    if ((await findUsersByMobile(cleanPhone)).some((u) => u.active !== false)) {
+        throw new Error("Mobile number already registered");
+    }
+
     // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    const otp = generateOTP();
-    console.log(`[2FA] Registration OTP for ${cleanEmail}: ${otp}`);
+    await homvedOtp.sendOtp(cleanPhone, 'registration');
 
     // Store registration data in persistent storage
     await saveOtpRecord(cleanEmail, {
-        otp,
-        expires: Date.now() + 10 * 60 * 1000,
+        expires: Date.now() + SESSION_TTL_MS,
         type: 'registration',
         registrationData: {
             email: cleanEmail,
@@ -129,69 +139,75 @@ exports.registerUser = async (data) => {
     return {
         requiresVerification: true,
         email: cleanEmail,
-        otp
+        phone: homvedOtp.maskMobile(cleanPhone)
     };
 };
 
-exports.loginUser = async (email, password) => {
-    if (!email) throw new Error("Email is required");
-    const cleanEmail = email.toString().trim().toLowerCase();
+exports.loginUser = async (mobileNo, password) => {
+    const mobile = homvedOtp.normalizeMobile(mobileNo);
+    if (!mobile) {
+        const err = new Error("Please enter a valid 10-digit mobile number");
+        err.statusCode = 400;
+        throw err;
+    }
+    if (!password) throw new Error("Invalid mobile number or password");
 
-    // Try both username and emailid case-insensitively
-    const result = await pool.query("SELECT * FROM public.users WHERE LOWER(emailid) = $1 OR LOWER(username) = $1", [cleanEmail]);
-    const user = result.rows[0];
-
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-        throw new Error("Invalid email or password");
+    // Existing accounts can share a number; the password decides which one is logging in
+    const matches = [];
+    for (const candidate of await findUsersByMobile(mobile)) {
+        if (candidate.password && await bcrypt.compare(password, candidate.password)) {
+            matches.push(candidate);
+        }
+    }
+    if (matches.length === 0) {
+        throw new Error("Invalid mobile number or password");
     }
 
-    if (user.active === false) {
+    const activeMatches = matches.filter((u) => u.active !== false);
+    if (activeMatches.length === 0) {
         throw new Error("This account has been closed. Please contact support if you need assistance.");
     }
-
-    if (user.contactno || user.emailid) {
-        const otp = generateOTP();
-        console.log(`[2FA] OTP for ${user.emailid}: ${otp}`);
-
-        // Store OTP with expiration (10 minutes)
-        await saveOtpRecord(cleanEmail, {
-            otp,
-            expires: Date.now() + 10 * 60 * 1000,
-            type: 'login',
-            userData: {
-                id: user.username,
-                userid: user.username,
-                email: user.emailid,
-                fullName: user.fullname || user.username,
-                phone: user.contactno,
-                twoFactorEnabled: true
-            }
-        });
-
-        return {
-            requires2FA: true,
-            userId: user.username,
-            email: cleanEmail,
-            otp: otp // Sending OTP to frontend for EmailJS integration
-        };
+    if (activeMatches.length > 1) {
+        const err = new Error("More than one account uses this mobile number and password. Please contact support.");
+        err.statusCode = 409;
+        throw err;
     }
 
-    const token = generateToken(user.username, 'user');
-    delete user.password;
+    const user = activeMatches[0];
+    // Key of the pending verification session, sent back by the client on verify/resend
+    const cleanEmail = (user.emailid || user.username).trim().toLowerCase();
 
-    return {
-        user: {
-            ...user,
+    await homvedOtp.sendOtp(mobile, 'login');
+
+    await saveOtpRecord(cleanEmail, {
+        expires: Date.now() + SESSION_TTL_MS,
+        type: 'login',
+        userData: {
             id: user.username,
             userid: user.username,
             email: user.emailid,
             fullName: user.fullname || user.username,
             phone: user.contactno,
-            memberSince: user.member_since,
+            mobile,
             twoFactorEnabled: true
-        },
-        token
+        }
+    });
+
+    return {
+        requires2FA: true,
+        userId: user.username,
+        email: cleanEmail,
+        phone: homvedOtp.maskMobile(mobile)
     };
+};
+
+// The number the OTP for this session was sent to.
+const sessionMobile = (record) => {
+    const mobile = homvedOtp.normalizeMobile(
+        record.type === 'registration' ? record.registrationData?.phone : record.userData?.mobile
+    );
+    if (!mobile) throw new Error("Verification session is invalid. Please try again.");
+    return mobile;
 };
 
 exports.verifyOtp = async (email, otp) => {
@@ -204,7 +220,7 @@ exports.verifyOtp = async (email, otp) => {
     console.log(`[verifyOtp Service] Checking OTP for email: ${cleanEmail}`);
     const record = await getOtpRecord(cleanEmail);
 
-    if (!record) {
+    if (!record || !['registration', 'login'].includes(record.type)) {
         console.error(`[verifyOtp Service] No OTP record found for email: ${cleanEmail}`);
         throw new Error("OTP not requested or already used. Please request a new one.");
     }
@@ -216,11 +232,7 @@ exports.verifyOtp = async (email, otp) => {
         throw new Error("OTP has expired. Please request a new one");
     }
 
-    console.log(`[verifyOtp Service] Comparing OTPs - Provided: ${cleanOtp}, Stored: ${record.otp}`);
-    if (record.otp !== cleanOtp) {
-        console.error(`[verifyOtp Service] Invalid OTP for email: ${cleanEmail}`);
-        throw new Error("Invalid verification code");
-    }
+    await homvedOtp.verifyOtp(sessionMobile(record), record.type, cleanOtp);
 
     let user;
     let token;
@@ -250,7 +262,8 @@ exports.verifyOtp = async (email, otp) => {
     } else {
         console.log(`[verifyOtp Service] Processing login verification for email: ${cleanEmail}`);
         // Login verification
-        user = record.userData;
+        const { mobile, ...userData } = record.userData;
+        user = userData;
         const loginId = user.id || user.userid;
         const loginResult = await pool.query("SELECT member_since, fullname, avatar_url, contactno FROM public.users WHERE username = $1", [loginId]);
         user.memberSince = loginResult.rows[0]?.member_since;
@@ -277,23 +290,24 @@ exports.resendOtp = async (email) => {
     
     // Check if there is an existing record to resend for
     const existingRecord = await getOtpRecord(cleanEmail);
-    
-    const otp = generateOTP();
-    console.log(`[resendOtp Service] New OTP for ${cleanEmail}: ${otp}`);
-
-    if (existingRecord) {
-        // Update existing record with new OTP and refreshed expiry (10 minutes)
-        existingRecord.otp = otp;
-        existingRecord.expires = Date.now() + 10 * 60 * 1000;
-        await saveOtpRecord(cleanEmail, existingRecord);
-    } else {
+    if (!existingRecord || !['registration', 'login'].includes(existingRecord.type)) {
         throw new Error("No active verification session found. Please try registering or logging in again.");
     }
+    if (Date.now() > existingRecord.expires) {
+        await deleteOtpRecord(cleanEmail);
+        throw new Error("Verification session has expired. Please try registering or logging in again.");
+    }
+
+    const mobile = sessionMobile(existingRecord);
+    await homvedOtp.sendOtp(mobile, existingRecord.type);
+
+    existingRecord.expires = Date.now() + SESSION_TTL_MS;
+    await saveOtpRecord(cleanEmail, existingRecord);
 
     return {
         success: true,
         email: cleanEmail,
-        otp
+        phone: homvedOtp.maskMobile(mobile)
     };
 };
 
@@ -354,66 +368,65 @@ exports.loginAdmin = async (username, password, ipAddress) => {
     }
 };
 
-exports.requestPasswordReset = async (email) => {
-    if (!email) {
-        throw new Error("Email is required");
-    }
-    const cleanEmail = email.trim().toLowerCase();
-
-    // Check if user exists in public.users
-    const result = await pool.query(
-        "SELECT username, emailid FROM public.users WHERE LOWER(emailid) = $1 OR LOWER(username) = $1",
-        [cleanEmail]
-    );
-
-    if (result.rows.length === 0) {
-        throw new Error("No account found with this email address");
+exports.requestPasswordReset = async (mobileNo) => {
+    const mobile = homvedOtp.normalizeMobile(mobileNo);
+    if (!mobile) {
+        throw new Error("Please enter a valid 10-digit mobile number");
     }
 
-    const user = result.rows[0];
-    const otp = generateOTP();
-    console.log(`[Password Reset OTP] for ${user.emailid}: ${otp}`);
+    const users = (await findUsersByMobile(mobile)).filter((u) => u.active !== false);
+    if (users.length === 0) {
+        throw new Error("No account found with this mobile number");
+    }
+    // Older accounts can share a number; never guess whose password to reset
+    if (users.length > 1) {
+        const err = new Error("More than one account uses this mobile number. Please contact support to reset your password.");
+        err.statusCode = 409;
+        throw err;
+    }
+    const user = users[0];
 
-    otpStore.set(user.emailid.toLowerCase(), {
-        otp,
-        expires: Date.now() + 10 * 60 * 1000, // 10 minutes
+    await homvedOtp.sendOtp(mobile, 'password_reset');
+
+    await saveOtpRecord(resetKey(mobile), {
+        expires: Date.now() + SESSION_TTL_MS,
         type: 'password_reset',
-        username: user.username,
-        email: user.emailid
+        userData: { username: user.username, mobile }
     });
 
     return {
         success: true,
-        email: user.emailid,
-        otp
+        phone: homvedOtp.maskMobile(mobile)
     };
 };
 
-exports.resetPasswordWithOtp = async (email, otp, newPassword) => {
-    if (!email || !otp || !newPassword) {
-        throw new Error("Email, verification code, and new password are required");
+exports.resetPasswordWithOtp = async (mobileNo, otp, newPassword) => {
+    if (!mobileNo || !otp || !newPassword) {
+        throw new Error("Mobile number, verification code, and new password are required");
     }
 
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanOtp = otp.trim();
+    const mobile = homvedOtp.normalizeMobile(mobileNo);
+    if (!mobile) {
+        throw new Error("Please enter a valid 10-digit mobile number");
+    }
+    const cleanOtp = otp.toString().trim();
 
-    const record = otpStore.get(cleanEmail);
+    // Checked before verification because a successful verify consumes the OTP
+    if (newPassword.length < 8) {
+        throw new Error("Password must be at least 8 characters");
+    }
+
+    const record = await getOtpRecord(resetKey(mobile));
     if (!record || record.type !== 'password_reset') {
         throw new Error("Password reset request not found or expired. Please request a new code.");
     }
 
     if (Date.now() > record.expires) {
-        otpStore.delete(cleanEmail);
+        await deleteOtpRecord(resetKey(mobile));
         throw new Error("Verification code has expired. Please request a new one.");
     }
 
-    if (record.otp !== cleanOtp) {
-        throw new Error("Invalid verification code");
-    }
-
-    if (newPassword.length < 8) {
-        throw new Error("Password must be at least 8 characters");
-    }
+    await homvedOtp.verifyOtp(sessionMobile(record), 'password_reset', cleanOtp);
 
     // Hash new password
     const salt = await bcrypt.genSalt(10);
@@ -421,12 +434,12 @@ exports.resetPasswordWithOtp = async (email, otp, newPassword) => {
 
     // Update in database
     await pool.query(
-        "UPDATE public.users SET password = $1 WHERE username = $2 OR LOWER(emailid) = $3",
-        [hashedPassword, record.username, cleanEmail]
+        "UPDATE public.users SET password = $1 WHERE username = $2",
+        [hashedPassword, record.userData.username]
     );
 
     // Invalidate OTP
-    otpStore.delete(cleanEmail);
+    await deleteOtpRecord(resetKey(mobile));
 
     return {
         success: true,

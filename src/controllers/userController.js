@@ -50,6 +50,17 @@ exports.updateProfile = async (req, res) => {
             if (!cleanPhone || !/^[6-9]\d{9}$/.test(cleanPhone)) {
                 return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number' });
             }
+
+            // Mobile number is the login identifier, so it must stay unique across active accounts
+            const inUse = await pool.query(
+                `SELECT 1 FROM public.users
+                 WHERE regexp_replace(contactno, '\\D', '', 'g') IN ($1::text, '91' || $1::text)
+                   AND active IS NOT FALSE AND username <> $2 LIMIT 1`,
+                [cleanPhone, username]
+            );
+            if (inUse.rows.length > 0) {
+                return res.status(409).json({ success: false, message: 'This mobile number is already registered with another account' });
+            }
         }
 
         const result = await pool.query(`

@@ -8,17 +8,17 @@ exports.register = async (req, res) => {
         const result = await authService.registerUser(req.body);
         res.status(201).json({ success: true, ...result });
     } catch (error) {
-        res.status(400).json({ success: false, message: error.message });
+        res.status(error.statusCode || 400).json({ success: false, message: error.message });
     }
 };
 
 exports.login = async (req, res) => {
     try {
-        const { email, password } = req.body;
-        const result = await authService.loginUser(email, password);
+        const { mobileNo, password } = req.body;
+        const result = await authService.loginUser(mobileNo, password);
         res.json({ success: true, ...result });
     } catch (error) {
-        res.status(401).json({ success: false, message: error.message });
+        res.status(error.statusCode || 401).json({ success: false, message: error.message });
     }
 };
 
@@ -42,7 +42,7 @@ exports.verifyOtp = async (req, res) => {
         res.json({ success: true, ...result });
     } catch (error) {
         console.error('[verifyOtp] Error:', error.message);
-        res.status(400).json({ success: false, message: error.message });
+        res.status(error.statusCode || 400).json({ success: false, message: error.message });
     }
 };
 
@@ -57,29 +57,29 @@ exports.resendOtp = async (req, res) => {
         res.json({ success: true, ...result });
     } catch (error) {
         console.error('[resendOtp] Error:', error.message);
-        res.status(400).json({ success: false, message: error.message });
+        res.status(error.statusCode || 400).json({ success: false, message: error.message });
     }
 };
 
 exports.forgotPassword = async (req, res) => {
     try {
-        const { email } = req.body;
-        const result = await authService.requestPasswordReset(email);
+        const { mobileNo } = req.body;
+        const result = await authService.requestPasswordReset(mobileNo);
         res.json(result);
     } catch (error) {
         console.error('[forgotPassword] Error:', error.message);
-        res.status(400).json({ success: false, message: error.message });
+        res.status(error.statusCode || 400).json({ success: false, message: error.message });
     }
 };
 
 exports.resetPassword = async (req, res) => {
     try {
-        const { email, otp, newPassword } = req.body;
-        const result = await authService.resetPasswordWithOtp(email, otp, newPassword);
+        const { mobileNo, otp, newPassword } = req.body;
+        const result = await authService.resetPasswordWithOtp(mobileNo, otp, newPassword);
         res.json(result);
     } catch (error) {
         console.error('[resetPassword] Error:', error.message);
-        res.status(400).json({ success: false, message: error.message });
+        res.status(error.statusCode || 400).json({ success: false, message: error.message });
     }
 };
 
