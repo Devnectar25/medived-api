@@ -292,6 +292,7 @@ exports.getCouponByCode = async (code) => {
 /**
  * Validate coupon code against order details
  */
+// Read-only check. consumeCouponForOrder enforces the limits again, atomically, when the order is placed.
 exports.validateCoupon = async (code, orderTotal, cartItems = [], userId = null) => {
     const normalizedCode = (code || '').trim().toUpperCase();
     if (!normalizedCode) throw new Error('Coupon code is required');
@@ -299,162 +300,150 @@ exports.validateCoupon = async (code, orderTotal, cartItems = [], userId = null)
     const parsedTotal = parseFloat(orderTotal);
     if (isNaN(parsedTotal) || parsedTotal < 0) throw new Error('Invalid order total');
 
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
+    const couponResult = await pool.query(
+        `SELECT c.*,
+            COALESCE((SELECT json_agg(category_id) FROM coupon_categories WHERE coupon_id = c.id), '[]') as category_ids,
+            COALESCE((SELECT json_agg(brand_id) FROM coupon_brands WHERE coupon_id = c.id), '[]') as brand_ids,
+            COALESCE((SELECT json_agg(product_id) FROM coupon_products WHERE coupon_id = c.id), '[]') as product_ids
+         FROM coupons c WHERE c.code = $1`,
+        [normalizedCode]
+    );
+    const coupon = couponResult.rows[0];
 
-        const couponResult = await client.query(
-            `SELECT c.*,
-                COALESCE((SELECT json_agg(category_id) FROM coupon_categories WHERE coupon_id = c.id), '[]') as category_ids,
-                COALESCE((SELECT json_agg(brand_id) FROM coupon_brands WHERE coupon_id = c.id), '[]') as brand_ids,
-                COALESCE((SELECT json_agg(product_id) FROM coupon_products WHERE coupon_id = c.id), '[]') as product_ids
-             FROM coupons c WHERE c.code = $1 FOR UPDATE`,
-            [normalizedCode]
-        );
-        const coupon = couponResult.rows[0];
+    if (!coupon) throw new Error('Invalid coupon code');
+    if (!coupon.active) throw new Error('This coupon is no longer active');
+    if (coupon.expiry_date && new Date() > new Date(coupon.expiry_date)) {
+        throw new Error('This coupon has expired');
+    }
+    if (parsedTotal < parseFloat(coupon.min_order_value)) {
+        throw new Error(`Minimum order value of ₹${parseFloat(coupon.min_order_value).toFixed(2)} required`);
+    }
 
-        if (!coupon) throw new Error('Invalid coupon code');
-        if (!coupon.active) throw new Error('This coupon is no longer active');
-        if (coupon.expiry_date && new Date() > new Date(coupon.expiry_date)) {
-            throw new Error('This coupon has expired');
-        }
-        if (parsedTotal < parseFloat(coupon.min_order_value)) {
-            throw new Error(`Minimum order value of ₹${parseFloat(coupon.min_order_value).toFixed(2)} required`);
-        }
-
-        const usageResult = await client.query(
+    // Orders are only counted for coupons that predate the used_count column
+    let effectiveUsedCount = parseInt(coupon.used_count, 10);
+    if (isNaN(effectiveUsedCount)) {
+        const usageResult = await pool.query(
             `SELECT COUNT(*) AS count FROM orders 
              WHERE coupon_code = $1 
                AND (status IS NULL OR status NOT IN ('Cancelled', 'CANCEL_APPROVED'))`,
             [normalizedCode]
         );
-        const orderActiveCount = parseInt(usageResult.rows[0].count, 10);
-        const effectiveUsedCount = (coupon.used_count !== null && coupon.used_count !== undefined)
-            ? parseInt(coupon.used_count, 10)
-            : orderActiveCount;
-
-        if (effectiveUsedCount >= parseInt(coupon.usage_limit, 10)) {
-            throw new Error('This coupon has reached its usage limit');
-        }
-
-        if (coupon.is_restricted && userId) {
-            const userAssignmentResult = await client.query(
-                `SELECT id FROM coupon_assignments WHERE coupon_id = $1 AND user_id = $2 AND status = 'assigned'`,
-                [coupon.id, userId]
-            );
-            if (userAssignmentResult.rows.length === 0) {
-                throw new Error('This coupon is restricted to specific accounts');
-            }
-        }
-
-        // ── Scope validation ────────────────────────────────────────────────
-        let applicableTotal = parsedTotal;
-        let eligibleItems = cartItems;
-
-        if (coupon.apply_to && coupon.apply_to !== 'all' && cartItems.length > 0) {
-            eligibleItems = cartItems.filter(item => {
-                if (coupon.apply_to === 'product') {
-                    const pids = coupon.product_ids || [];
-                    if (pids.length > 0) return pids.includes(Number(item.product_id || item.id));
-                    return String(item.product_id || item.id) === String(coupon.product_id);
-                }
-                if (coupon.apply_to === 'category') {
-                    const cids = coupon.category_ids || [];
-                    if (cids.length > 0) return cids.includes(Number(item.category_id));
-                    return String(item.category_id) === String(coupon.category_id);
-                }
-                if (coupon.apply_to === 'brand') {
-                    const bids = coupon.brand_ids || [];
-                    if (bids.length > 0) return bids.includes(Number(item.brand_id));
-                    return String(item.brand_id) === String(coupon.brand_id);
-                }
-                return false;
-            });
-
-            if (eligibleItems.length === 0) {
-                throw new Error(`This coupon only applies to specific ${coupon.apply_to}s not present in your cart`);
-            }
-            applicableTotal = eligibleItems.reduce((sum, item) => sum + (parseFloat(item.price) * parseInt(item.quantity, 10)), 0);
-        } else if (coupon.apply_to && coupon.apply_to !== 'all' && cartItems.length === 0) {
-            throw new Error('Cart items are required to validate this coupon');
-        }
-
-        // ── Discount calculation ────────────────────────────────────────────
-        let discountAmount = 0;
-        let bogoAutoAdd = false;
-        let bogoItemId = null;
-        let bogoItemName = null;
-
-        const dType = (coupon.discount_type || '').toLowerCase();
-        const dValue = parseFloat(coupon.discount_value) || 0;
-
-        if (dType === 'percentage') {
-            const validPct = Math.min(100, Math.max(0, dValue));
-            discountAmount = (applicableTotal * validPct) / 100;
-        } else if (dType === 'fixed') {
-            discountAmount = Math.min(dValue, applicableTotal);
-        } else if (dType === 'bogo') {
-            // HOM-128: Refined BOGO logic - Buy 1 (or more), Get 1 Free
-            // The discount only triggers if an eligible item has quantity >= 2.
-            // The discount is exactly ONE unit price of that item.
-            
-            const itemsWithQty2 = eligibleItems.filter(item => parseInt(item.quantity || 1, 10) >= 2);
-            
-            if (itemsWithQty2.length === 0) {
-                if (eligibleItems.length > 0) {
-                    throw new Error('This BOGO coupon requires at least 2 units of an eligible product in your cart.');
-                } else {
-                    // This case is actually caught by the scope validation above, but kept for robustness
-                    throw new Error(`This BOGO coupon only applies to specific ${coupon.apply_to}s not present in your cart.`);
-                }
-            }
-            
-            // If multiple eligible products have qty >= 2, we pick the highest priced one for the discount.
-            const maxPriceItem = itemsWithQty2.reduce((prev, current) => {
-                return (parseFloat(prev.price) > parseFloat(current.price)) ? prev : current;
-            }, itemsWithQty2[0]);
-            
-            discountAmount = parseFloat(maxPriceItem.price);
-            
-            // Result fields for frontend display
-            bogoItemId = maxPriceItem.id || maxPriceItem.product_id;
-            bogoItemName = maxPriceItem.name || maxPriceItem.productname;
-        }
-
-        if (discountAmount > parsedTotal) discountAmount = parsedTotal;
-        if (discountAmount < 0) discountAmount = 0;
-
-        await client.query('COMMIT');
-
-        return {
-            isValid: true,
-            bogoAutoAdd,
-            bogoItemId,
-            bogoItemName,
-            coupon: {
-                id: coupon.id,
-                code: coupon.code,
-                discount_type: dType,
-                discount_value: dType === 'percentage' ? Math.min(100, Math.max(0, dValue)) : dValue,
-                apply_to: coupon.apply_to,
-                category_ids: coupon.category_ids,
-                brand_ids: coupon.brand_ids,
-                product_ids: coupon.product_ids,
-                // Backward compatibility fields
-                brand_id: coupon.brand_id ?? null,
-                category_id: coupon.category_id ?? null,
-                product_id: coupon.product_id ?? null,
-            },
-            discountAmount: parseFloat(discountAmount.toFixed(2)),
-            finalTotal: parseFloat((parsedTotal - discountAmount).toFixed(2))
-        };
-
-    } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-    } finally {
-        client.release();
+        effectiveUsedCount = parseInt(usageResult.rows[0].count, 10);
     }
+
+    if (effectiveUsedCount >= parseInt(coupon.usage_limit, 10)) {
+        throw new Error('This coupon has reached its usage limit');
+    }
+
+    if (coupon.is_restricted && userId) {
+        const userAssignmentResult = await pool.query(
+            `SELECT id FROM coupon_assignments WHERE coupon_id = $1 AND user_id = $2 AND status = 'assigned'`,
+            [coupon.id, userId]
+        );
+        if (userAssignmentResult.rows.length === 0) {
+            throw new Error('This coupon is restricted to specific accounts');
+        }
+    }
+
+    // ── Scope validation ────────────────────────────────────────────────
+    let applicableTotal = parsedTotal;
+    let eligibleItems = cartItems;
+
+    if (coupon.apply_to && coupon.apply_to !== 'all' && cartItems.length > 0) {
+        eligibleItems = cartItems.filter(item => {
+            if (coupon.apply_to === 'product') {
+                const pids = coupon.product_ids || [];
+                if (pids.length > 0) return pids.includes(Number(item.product_id || item.id));
+                return String(item.product_id || item.id) === String(coupon.product_id);
+            }
+            if (coupon.apply_to === 'category') {
+                const cids = coupon.category_ids || [];
+                if (cids.length > 0) return cids.includes(Number(item.category_id));
+                return String(item.category_id) === String(coupon.category_id);
+            }
+            if (coupon.apply_to === 'brand') {
+                const bids = coupon.brand_ids || [];
+                if (bids.length > 0) return bids.includes(Number(item.brand_id));
+                return String(item.brand_id) === String(coupon.brand_id);
+            }
+            return false;
+        });
+
+        if (eligibleItems.length === 0) {
+            throw new Error(`This coupon only applies to specific ${coupon.apply_to}s not present in your cart`);
+        }
+        applicableTotal = eligibleItems.reduce((sum, item) => sum + (parseFloat(item.price) * parseInt(item.quantity, 10)), 0);
+    } else if (coupon.apply_to && coupon.apply_to !== 'all' && cartItems.length === 0) {
+        throw new Error('Cart items are required to validate this coupon');
+    }
+
+    // ── Discount calculation ────────────────────────────────────────────
+    let discountAmount = 0;
+    let bogoAutoAdd = false;
+    let bogoItemId = null;
+    let bogoItemName = null;
+
+    const dType = (coupon.discount_type || '').toLowerCase();
+    const dValue = parseFloat(coupon.discount_value) || 0;
+
+    if (dType === 'percentage') {
+        const validPct = Math.min(100, Math.max(0, dValue));
+        discountAmount = (applicableTotal * validPct) / 100;
+    } else if (dType === 'fixed') {
+        discountAmount = Math.min(dValue, applicableTotal);
+    } else if (dType === 'bogo') {
+        // HOM-128: Refined BOGO logic - Buy 1 (or more), Get 1 Free
+        // The discount only triggers if an eligible item has quantity >= 2.
+        // The discount is exactly ONE unit price of that item.
+        
+        const itemsWithQty2 = eligibleItems.filter(item => parseInt(item.quantity || 1, 10) >= 2);
+        
+        if (itemsWithQty2.length === 0) {
+            if (eligibleItems.length > 0) {
+                throw new Error('This BOGO coupon requires at least 2 units of an eligible product in your cart.');
+            } else {
+                // This case is actually caught by the scope validation above, but kept for robustness
+                throw new Error(`This BOGO coupon only applies to specific ${coupon.apply_to}s not present in your cart.`);
+            }
+        }
+        
+        // If multiple eligible products have qty >= 2, we pick the highest priced one for the discount.
+        const maxPriceItem = itemsWithQty2.reduce((prev, current) => {
+            return (parseFloat(prev.price) > parseFloat(current.price)) ? prev : current;
+        }, itemsWithQty2[0]);
+        
+        discountAmount = parseFloat(maxPriceItem.price);
+        
+        // Result fields for frontend display
+        bogoItemId = maxPriceItem.id || maxPriceItem.product_id;
+        bogoItemName = maxPriceItem.name || maxPriceItem.productname;
+    }
+
+    if (discountAmount > parsedTotal) discountAmount = parsedTotal;
+    if (discountAmount < 0) discountAmount = 0;
+
+    return {
+        isValid: true,
+        bogoAutoAdd,
+        bogoItemId,
+        bogoItemName,
+        coupon: {
+            id: coupon.id,
+            code: coupon.code,
+            discount_type: dType,
+            discount_value: dType === 'percentage' ? Math.min(100, Math.max(0, dValue)) : dValue,
+            apply_to: coupon.apply_to,
+            category_ids: coupon.category_ids,
+            brand_ids: coupon.brand_ids,
+            product_ids: coupon.product_ids,
+            // Backward compatibility fields
+            brand_id: coupon.brand_id ?? null,
+            category_id: coupon.category_id ?? null,
+            product_id: coupon.product_id ?? null,
+        },
+        discountAmount: parseFloat(discountAmount.toFixed(2)),
+        finalTotal: parseFloat((parsedTotal - discountAmount).toFixed(2))
+    };
 };
 
 /**
@@ -524,6 +513,31 @@ exports.getUsedUsers = async (couponId) => {
 /**
  * Consume a coupon usage (increment used_count and mark assignment as used)
  */
+// Uses the coupon for a new order, inside the order transaction. The conditional update makes
+// simultaneous orders take turns, so together they cannot exceed the usage limit.
+// Call it last before COMMIT: it locks the coupon row until then.
+exports.consumeCouponForOrder = async (dbClient, couponCode, userId) => {
+    const result = await dbClient.query(
+        `WITH coupon AS (
+             UPDATE coupons SET used_count = COALESCE(used_count, 0) + 1
+             WHERE code = $1 AND (used_count IS NULL OR used_count < usage_limit)
+             RETURNING id, is_restricted
+         ), assignment AS (
+             UPDATE coupon_assignments
+             SET status = 'used', used_at = CURRENT_TIMESTAMP
+             WHERE coupon_id = (SELECT id FROM coupon) AND user_id = $2 AND status = 'assigned'
+             RETURNING id
+         )
+         SELECT (SELECT is_restricted FROM coupon) AS is_restricted,
+                EXISTS (SELECT 1 FROM coupon) AS available,
+                EXISTS (SELECT 1 FROM assignment) AS assigned`,
+        [couponCode.trim().toUpperCase(), userId]
+    );
+    const { available, is_restricted, assigned } = result.rows[0];
+    if (!available) throw new Error('This coupon has reached its usage limit');
+    if (is_restricted && userId && !assigned) throw new Error('This coupon is restricted to specific accounts');
+};
+
 exports.consumeCouponUsage = async (dbClient, couponCode, couponId, userId) => {
     if (!couponCode) return;
     const normalizedCode = couponCode.trim().toUpperCase();

@@ -85,25 +85,22 @@ exports.getAllSubcategories = async (optionsOrPage, maybeLimit, maybeCategory, m
         const parsedLimit = Math.max(1, parseInt(limit) || 10);
         const offset = (parsedPage - 1) * parsedLimit;
 
-        const countQuery = `
-            SELECT COUNT(*) 
+        const fromClause = `
             FROM subcategory s 
             LEFT JOIN category c ON s.category_id = c.category_id 
             ${whereString}
         `;
-        const countResult = await pool.query(countQuery, params);
-        const total = parseInt(countResult.rows[0]?.count || 0);
-
         const dataParams = [...params, parsedLimit, offset];
-        const dataQuery = `
-            SELECT s.*, c.name as category_name 
-            FROM subcategory s 
-            LEFT JOIN category c ON s.category_id = c.category_id 
-            ${whereString} 
-            ${orderClause} 
-            LIMIT $${paramIdx} OFFSET $${paramIdx + 1}
-        `;
-        const dataResult = await pool.query(dataQuery, dataParams);
+        const dataResult = await pool.query(
+            `SELECT s.*, c.name as category_name, COUNT(*) OVER() as total_count
+             ${fromClause} ${orderClause} LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
+            dataParams
+        );
+
+        // A page past the end returns no rows, so the total has to be counted separately
+        const total = dataResult.rows.length > 0 || offset === 0
+            ? parseInt(dataResult.rows[0]?.total_count || 0)
+            : parseInt((await pool.query(`SELECT COUNT(*) ${fromClause}`, params)).rows[0].count);
 
         return {
             data: dataResult.rows.map(mapSubcategory),

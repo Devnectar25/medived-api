@@ -4,6 +4,7 @@ const paymentService = require('./paymentService');
 const dtdcService = require('./dtdcService');
 const whatsappService = require('./whatsappService');
 const settingsService = require('./settingsService');
+const homvedOtp = require('./homvedOtpService');
 
 // ── Reverse logistics (parcel collection from customer) lifecycle ──────────
 // Return:  Return Approved → Return Pickup Scheduled → Return Out for Pickup → Return Collected → Return In Transit → Received at Homved → Refunded
@@ -48,18 +49,6 @@ const REPLACEMENT_VALUE_SQL = `
              WHERE pi.order_id = o.parent_order_id AND pi.product_id = ri.product_id), 0)), 0), 2)
         FROM order_items ri WHERE ri.order_id = o.id
     ) END AS replacement_value`;
-
-let qaColumnsEnsured = false;
-const ensureQaColumns = async () => {
-    if (qaColumnsEnsured) return;
-    await pool.query(`
-        ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS qa_status VARCHAR(20);
-        ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS qa_notes TEXT;
-        ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS qa_checked_at TIMESTAMP;
-        ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS qa_checked_by VARCHAR(100);
-    `);
-    qaColumnsEnsured = true;
-};
 
 /**
  * HOMVED-MULTI-PRODUCT: Centralized Parent Order Status Resolver
@@ -222,167 +211,170 @@ const calculateCodBalanceDue = async (client, orderId) => {
 };
 
 exports.createOrder = async (orderData) => {
+    const {
+        userId, orderNumber, addressId, paymentMethod, paymentStatus, paymentType,
+        subtotal, shipping, total, items, trackingNumber, estimatedDelivery,
+        couponCode,   // optional — sent from Checkout.tsx when user applied a coupon
+        cartItemIds,
+        customerName,
+        customerPhone
+    } = orderData;
+    console.log(`[OrderService] Starting order creation for user: ${userId}, Order #: ${orderNumber}`);
+    console.log(`[OrderService] Order items count: ${items?.length}, Cart item IDs: ${JSON.stringify(cartItemIds)}`);
+    // subtotal from client is received but intentionally never used in computation — dbSubtotal below is used instead
+
+    // ── PRE-STEP: Always re-fetch real prices from DB ──────────────────────
+    // This ensures scope matching AND subtotal calculations use authoritative
+    // product prices — not values the client could have tampered with.
+
+    let cartQuery = `SELECT
+            ci.product_id,
+            ci.product_id AS id,
+            ci.quantity,
+            p.price,
+            p.category_id,
+            p.brand   AS brand_id
+         FROM cart_items ci
+         JOIN products p ON ci.product_id::text = p.product_id::text
+         WHERE ci.user_id = $1`;
+    let cartParams = [userId];
+
+    if (cartItemIds && cartItemIds.length > 0) {
+        cartQuery += ` AND ci.product_id::integer = ANY($2::integer[])`;
+        cartParams.push(cartItemIds);
+    }
+
+    // Everything that only reads runs before a connection is reserved for the transaction.
+    // Asking the pool for a second connection while holding one makes concurrent checkouts
+    // wait for each other until they time out.
+    const [cartResult, storeSettings, approvalMode] = await Promise.all([
+        pool.query(cartQuery, cartParams),
+        settingsService.getSettings(),
+        exports.getOrderApprovalMode()
+    ]);
+    console.log(`[OrderService] Cart fetch result: ${cartResult.rows.length} rows`);
+    const dbCartItems = cartResult.rows.map(row => ({
+        ...row,
+        price: parseFloat(row.price),
+        quantity: parseInt(row.quantity, 10)
+    }));
+
+    // Compute subtotal from DB cart prices — client value is ignored
+    const dbSubtotal = dbCartItems.reduce(
+        (sum, item) => sum + (item.price * item.quantity),
+        0
+    );
+    console.log(`[OrderService] DB Subtotal computed: ${dbSubtotal}`);
+
+    // ── SECURITY & STOCK VALIDATION (HOM-MAX-QTY & COD PROTECTION) ────────
+    const MAX_ITEM_QUANTITY = 10;
+    const MAX_COD_TOTAL = 10000;
+    const MAX_COD_ITEMS = 20;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+        throw new Error('Order must contain at least one item');
+    }
+
+    let totalOrderUnits = 0;
+    const prodIdList = [];
+    for (const item of items) {
+        const qty = parseInt(item.quantity, 10);
+        const prodId = parseInt(item.id || item.productId, 10);
+        if (isNaN(qty) || qty <= 0) {
+            throw new Error(`Invalid quantity for item ${item.name || prodId}`);
+        }
+        if (qty > MAX_ITEM_QUANTITY) {
+            throw new Error(`Maximum purchase limit is ${MAX_ITEM_QUANTITY} units per product. Item '${item.name || prodId}' requested ${qty} units.`);
+        }
+        totalOrderUnits += qty;
+        prodIdList.push(prodId);
+    }
+
+    // Early check for a clear message. STEP 3 enforces stock atomically when it is deducted.
+    const stockResult = await pool.query(
+        `SELECT product_id, productname, stock_quantity, instock FROM products WHERE product_id = ANY($1::integer[])`,
+        [prodIdList]
+    );
+    const productsById = new Map(stockResult.rows.map((row) => [parseInt(row.product_id, 10), row]));
+    for (const item of items) {
+        const prodId = parseInt(item.id || item.productId, 10);
+        const qty = parseInt(item.quantity, 10);
+        const productRow = productsById.get(prodId);
+        if (!productRow) {
+            throw new Error(`Product '${item.name || prodId}' not found.`);
+        }
+        const currentStock = parseInt(productRow.stock_quantity, 10) || 0;
+        if (currentStock < qty || !productRow.instock) {
+            throw new Error(`Insufficient stock for '${productRow.productname}'. Requested: ${qty}, Available: ${currentStock}.`);
+        }
+    }
+
+    // ── STEP 1: Taxes, Surcharges & Coupon validation (server-side) ──────
+    let calculatedGst = 0;
+    if (storeSettings.gst?.enabled) {
+        const gstRate = parseFloat(storeSettings.gst?.defaultRate || 0);
+        if (!storeSettings.gst?.inclusive) {
+            calculatedGst = Math.round(dbSubtotal * (gstRate / 100));
+        }
+    }
+
+    let calculatedCardSurcharge = 0;
+    if (storeSettings.cardSurcharge?.enabled && (paymentMethod === 'card' || paymentMethod === 'online')) {
+        const surchargeRate = parseFloat(storeSettings.cardSurcharge?.rate || 0);
+        calculatedCardSurcharge = Math.round(dbSubtotal * (surchargeRate / 100));
+    }
+
+    let calculatedCodCharge = 0;
+    if (storeSettings.codCharge?.enabled && paymentMethod === 'cod') {
+        calculatedCodCharge = parseFloat(storeSettings.codCharge?.amount || 0);
+    }
+
+    const freeShippingThreshold = storeSettings.storefront?.freeShippingThreshold ?? 499;
+    const effectiveShipping = dbSubtotal >= freeShippingThreshold ? 0 : parseFloat(shipping || 50);
+
+    // We never trust the client's `total`. We always recompute here.
+    let discountAmount = 0;
+    let couponId = null;                // FK → coupons.id; null if no coupon applied
+    let validatedCouponCode = null;
+    // originalTotal = pre-discount total (dbSubtotal + shipping + gst + surcharge + cod); used for audit clarity
+    const originalTotal = dbSubtotal + effectiveShipping + calculatedGst + calculatedCardSurcharge + calculatedCodCharge;
+    let finalTotal = originalTotal;
+
+    if (couponCode) {
+        // dbCartItems already fetched above from DB — real prices, not client values.
+        // validateCoupon: checks active, expiry, min_order_value (vs dbSubtotal),
+        //                 usage_limit, assignment eligibility, scope matching.
+        const validation = await couponService.validateCoupon(
+            couponCode,
+            dbSubtotal,             // server-computed from DB prices, never client value
+            dbCartItems,
+            userId
+        );
+
+        discountAmount = validation.discountAmount;
+        couponId = validation.coupon?.id || null;      // FK — links order to coupons row
+        validatedCouponCode = validation.coupon.code;  // normalized uppercase from service
+        finalTotal = originalTotal - discountAmount;
+
+        if (finalTotal < 0) finalTotal = 0;
+    }
+
+    // Validate Cash on Delivery (COD) limits to prevent inventory exhaustion
+    if (paymentMethod === 'cod') {
+        if (totalOrderUnits > MAX_COD_ITEMS) {
+            throw new Error(`Cash on Delivery is limited to a maximum of ${MAX_COD_ITEMS} total units per order. Please choose an online payment method for bulk orders.`);
+        }
+        if (finalTotal > MAX_COD_TOTAL) {
+            throw new Error(`Cash on Delivery is available only for orders up to ₹${MAX_COD_TOTAL}. Please choose an online payment method.`);
+        }
+    }
+
+    let order;
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
 
-        const {
-            userId, orderNumber, addressId, paymentMethod, paymentStatus, paymentType,
-            subtotal, shipping, total, items, trackingNumber, estimatedDelivery,
-            couponCode,   // optional — sent from Checkout.tsx when user applied a coupon
-            cartItemIds,
-            customerName,
-            customerPhone
-        } = orderData;
-        console.log(`[OrderService] Starting order creation for user: ${userId}, Order #: ${orderNumber}`);
-        console.log(`[OrderService] Order items count: ${items?.length}, Cart item IDs: ${JSON.stringify(cartItemIds)}`);
-        // subtotal from client is received but intentionally never used in computation — dbSubtotal below is used instead
-
-        // ── PRE-STEP: Always re-fetch real prices from DB ──────────────────────
-        // This ensures scope matching AND subtotal calculations use authoritative
-        // product prices — not values the client could have tampered with.
-
-        let cartQuery = `SELECT
-                ci.product_id,
-                ci.product_id AS id,
-                ci.quantity,
-                p.price,
-                p.category_id,
-                p.brand   AS brand_id
-             FROM cart_items ci
-             JOIN products p ON ci.product_id::text = p.product_id::text
-             WHERE ci.user_id = $1`;
-        let cartParams = [userId];
-
-        if (cartItemIds && cartItemIds.length > 0) {
-            cartQuery += ` AND ci.product_id::integer = ANY($2::integer[])`;
-            cartParams.push(cartItemIds);
-        }
-
-        const cartResult = await client.query(cartQuery, cartParams);
-        console.log(`[OrderService] Cart fetch result: ${cartResult.rows.length} rows`);
-        const dbCartItems = cartResult.rows.map(row => ({
-            ...row,
-            price: parseFloat(row.price),
-            quantity: parseInt(row.quantity, 10)
-        }));
-
-        // Compute subtotal from DB cart prices — client value is ignored
-        const dbSubtotal = dbCartItems.reduce(
-            (sum, item) => sum + (item.price * item.quantity),
-            0
-        );
-        console.log(`[OrderService] DB Subtotal computed: ${dbSubtotal}`);
-
-        // ── SECURITY & STOCK VALIDATION (HOM-MAX-QTY & COD PROTECTION) ────────
-        const MAX_ITEM_QUANTITY = 10;
-        const MAX_COD_TOTAL = 10000;
-        const MAX_COD_ITEMS = 20;
-
-        if (!items || !Array.isArray(items) || items.length === 0) {
-            throw new Error('Order must contain at least one item');
-        }
-
-        let totalOrderUnits = 0;
-        const prodIdList = [];
-        for (const item of items) {
-            const qty = parseInt(item.quantity, 10);
-            const prodId = parseInt(item.id || item.productId, 10);
-            if (isNaN(qty) || qty <= 0) {
-                throw new Error(`Invalid quantity for item ${item.name || prodId}`);
-            }
-            if (qty > MAX_ITEM_QUANTITY) {
-                throw new Error(`Maximum purchase limit is ${MAX_ITEM_QUANTITY} units per product. Item '${item.name || prodId}' requested ${qty} units.`);
-            }
-            totalOrderUnits += qty;
-            prodIdList.push(prodId);
-        }
-
-        // Single batched atomic stock check with row lock (prevents N sequential DB roundtrips)
-        const prodStockRes = await client.query(
-            `SELECT product_id, productname, stock_quantity, instock FROM products WHERE product_id = ANY($1::integer[]) FOR UPDATE`,
-            [prodIdList]
-        );
-        const prodMap = new Map();
-        prodStockRes.rows.forEach(r => prodMap.set(parseInt(r.product_id, 10), r));
-
-        for (const item of items) {
-            const prodId = parseInt(item.id || item.productId, 10);
-            const qty = parseInt(item.quantity, 10);
-            const productRow = prodMap.get(prodId);
-            if (!productRow) {
-                throw new Error(`Product '${item.name || prodId}' not found.`);
-            }
-            const currentStock = parseInt(productRow.stock_quantity, 10) || 0;
-            if (currentStock < qty || !productRow.instock) {
-                throw new Error(`Insufficient stock for '${productRow.productname}'. Requested: ${qty}, Available: ${currentStock}.`);
-            }
-        }
-
-        // ── STEP 1: Taxes, Surcharges & Coupon validation (server-side) ──────
-        const storeSettings = await settingsService.getSettings();
-        
-        let calculatedGst = 0;
-        if (storeSettings.gst?.enabled) {
-            const gstRate = parseFloat(storeSettings.gst?.defaultRate || 0);
-            if (!storeSettings.gst?.inclusive) {
-                calculatedGst = Math.round(dbSubtotal * (gstRate / 100));
-            }
-        }
-
-        let calculatedCardSurcharge = 0;
-        if (storeSettings.cardSurcharge?.enabled && (paymentMethod === 'card' || paymentMethod === 'online')) {
-            const surchargeRate = parseFloat(storeSettings.cardSurcharge?.rate || 0);
-            calculatedCardSurcharge = Math.round(dbSubtotal * (surchargeRate / 100));
-        }
-
-        let calculatedCodCharge = 0;
-        if (storeSettings.codCharge?.enabled && paymentMethod === 'cod') {
-            calculatedCodCharge = parseFloat(storeSettings.codCharge?.amount || 0);
-        }
-
-        const freeShippingThreshold = storeSettings.storefront?.freeShippingThreshold ?? 499;
-        const effectiveShipping = dbSubtotal >= freeShippingThreshold ? 0 : parseFloat(shipping || 50);
-
-        // We never trust the client's `total`. We always recompute here.
-        let discountAmount = 0;
-        let couponId = null;                // FK → coupons.id; null if no coupon applied
-        let validatedCouponCode = null;
-        // originalTotal = pre-discount total (dbSubtotal + shipping + gst + surcharge + cod); used for audit clarity
-        const originalTotal = dbSubtotal + effectiveShipping + calculatedGst + calculatedCardSurcharge + calculatedCodCharge;
-        let finalTotal = originalTotal;
-
-        if (couponCode) {
-            // dbCartItems already fetched above from DB — real prices, not client values.
-            // validateCoupon: checks active, expiry, min_order_value (vs dbSubtotal),
-            //                 usage_limit, assignment eligibility, scope matching.
-            const validation = await couponService.validateCoupon(
-                couponCode,
-                dbSubtotal,             // server-computed from DB prices, never client value
-                dbCartItems,
-                userId
-            );
-
-            discountAmount = validation.discountAmount;
-            couponId = validation.coupon?.id || null;      // FK — links order to coupons row
-            validatedCouponCode = validation.coupon.code;  // normalized uppercase from service
-            finalTotal = originalTotal - discountAmount;
-
-            if (finalTotal < 0) finalTotal = 0;
-        }
-
-        // Validate Cash on Delivery (COD) limits to prevent inventory exhaustion
-        if (paymentMethod === 'cod') {
-            if (totalOrderUnits > MAX_COD_ITEMS) {
-                throw new Error(`Cash on Delivery is limited to a maximum of ${MAX_COD_ITEMS} total units per order. Please choose an online payment method for bulk orders.`);
-            }
-            if (finalTotal > MAX_COD_TOTAL) {
-                throw new Error(`Cash on Delivery is available only for orders up to ₹${MAX_COD_TOTAL}. Please choose an online payment method.`);
-            }
-        }
-
         // ── STEP 2: Insert order with coupon fields & approval mode ───────────
-        const approvalMode = await exports.getOrderApprovalMode();
         // Automatic: COD orders auto-confirmed; Manual: stays Pending
         const initialStatus = (approvalMode === 'automatic' && paymentMethod === 'cod') ? 'Confirmed' : 'Pending';
 
@@ -420,72 +412,102 @@ exports.createOrder = async (orderData) => {
             ]
         );
 
-        const order = orderResult.rows[0];
+        order = orderResult.rows[0];
         console.log(`[OrderService] Order inserted successfully: ID ${order.id}`);
 
-        // Update user's fullname and contactno if provided during checkout so user profile and invoices match
-        const cleanCustomerName = (customerName || '').trim();
-        const cleanCustomerPhone = (customerPhone || '').trim();
-        if (userId && (cleanCustomerName || cleanCustomerPhone)) {
-            try {
-                await client.query(
-                    `UPDATE users 
-                     SET fullname = COALESCE(NULLIF($1, ''), fullname),
-                         contactno = COALESCE(NULLIF($2, ''), contactno)
-                     WHERE username = $3`,
-                    [cleanCustomerName || null, cleanCustomerPhone || null, userId]
-                );
-            } catch (uErr) {
-                console.warn('[OrderService] Could not update user fullname:', uErr.message);
-            }
-        }
-
-        // ── STEP 3: Consume coupon usage & assignment ──────────────────────────
-        if (validatedCouponCode) {
-            await couponService.consumeCouponUsage(client, validatedCouponCode, couponId, userId);
-        }
-
-        // ── STEP 4: Insert order items + update stock ──────────────────────────
-        for (const item of items) {
-            await client.query(
-                `INSERT INTO order_items (order_id, product_id, name, price, quantity, image, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-                [order.id, item.id || item.productId, item.name, item.price, item.quantity, item.image]
-            );
-
-            await client.query(
-                `UPDATE products
-                 SET stock_quantity = GREATEST(0, stock_quantity - $2),
-                     quantity       = GREATEST(0, quantity - $2),
-                     instock        = CASE WHEN GREATEST(0, stock_quantity - $2) <= 0 THEN false ELSE instock END,
+        // ── STEP 3: Deduct stock, insert order items and clear the cart ───────
+        // One conditional statement, so concurrent orders cannot oversell and product rows stay
+        // locked for as few round trips as possible. Rows are locked in id order to avoid deadlocks.
+        // Only COD orders clear the cart here. For online/card/UPI payments the cart is kept
+        // until payment verification, so a cancelled or failed payment preserves it.
+        const clearCart = paymentMethod === 'cod';
+        const clearOnlyIds = cartItemIds && cartItemIds.length > 0 ? cartItemIds : null;
+        const deducted = await client.query(
+            `WITH lines AS (
+                 SELECT * FROM unnest($2::integer[], $3::text[], $4::numeric[], $5::integer[], $6::text[])
+                     WITH ORDINALITY AS l(product_id, name, price, quantity, image, position)
+             ), locked AS MATERIALIZED (
+                 SELECT product_id FROM products WHERE product_id = ANY($2::integer[]) ORDER BY product_id FOR UPDATE
+             ), needed AS (
+                 SELECT l.product_id, SUM(l.quantity)::integer AS quantity
+                 FROM lines l JOIN locked USING (product_id) GROUP BY l.product_id
+             ), stock AS (
+                 UPDATE products p
+                 SET stock_quantity = p.stock_quantity - n.quantity,
+                     quantity       = GREATEST(0, p.quantity - n.quantity),
+                     instock        = CASE WHEN p.stock_quantity - n.quantity <= 0 THEN false ELSE p.instock END,
                      updated_at     = NOW()
-                 WHERE product_id = $1::integer`,
-                [item.id || item.productId, item.quantity]
-            );
+                 FROM needed n
+                 WHERE p.product_id = n.product_id AND p.instock AND p.stock_quantity >= n.quantity
+                 RETURNING p.product_id
+             ), inserted AS (
+                 INSERT INTO order_items (order_id, product_id, name, price, quantity, image, created_at)
+                 SELECT $1, product_id, name, price, quantity, image, NOW() FROM lines ORDER BY position
+             ), cleared AS (
+                 DELETE FROM cart_items
+                 WHERE $7::boolean AND user_id = $8
+                   AND ($9::integer[] IS NULL OR product_id = ANY($9::integer[]))
+             )
+             SELECT product_id FROM stock`,
+            [
+                order.id,
+                prodIdList,
+                items.map((item) => item.name),
+                items.map((item) => item.price),
+                items.map((item) => parseInt(item.quantity, 10)),
+                items.map((item) => item.image),
+                clearCart,
+                userId,
+                clearOnlyIds
+            ]
+        );
+        const deductedIds = new Set(deducted.rows.map((row) => parseInt(row.product_id, 10)));
+        const soldOut = prodIdList.find((id) => !deductedIds.has(id));
+        if (soldOut !== undefined) {
+            throw new Error(`Insufficient stock for '${productsById.get(soldOut).productname}'.`);
         }
 
-        // ── STEP 5: Clear cart ─────────────────────────────────────────────────
-        // Only clear the cart immediately for COD orders. For online/card/UPI payments,
-        // the cart is kept intact until successful payment verification on the frontend.
-        // This ensures that if the user cancels or the payment fails, their cart is preserved.
-        if (paymentMethod === 'cod') {
-            if (cartItemIds && cartItemIds.length > 0) {
-                await client.query(`DELETE FROM cart_items WHERE user_id = $1 AND product_id::integer = ANY($2::integer[])`, [userId, cartItemIds]);
-            } else {
-                await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [userId]);
-            }
+        // ── STEP 4: Consume coupon usage & assignment ──────────────────────────
+        if (validatedCouponCode) {
+            await couponService.consumeCouponForOrder(client, validatedCouponCode, userId);
         }
 
         await client.query('COMMIT');
         order.items = items;
-        return order;
-
     } catch (error) {
-        await client.query('ROLLBACK');
+        await client.query('ROLLBACK').catch(() => {});
         throw error;
     } finally {
         client.release();
     }
+
+    // Keep the profile in step with checkout: delivery and invoices use its name and mobile number.
+    // The mobile number is also the login identifier, so one owned by another account is not taken over.
+    const cleanCustomerName = (customerName || '').trim();
+    const cleanCustomerPhone = homvedOtp.normalizeMobile(customerPhone);
+    if (userId && (cleanCustomerName || cleanCustomerPhone)) {
+        try {
+            await pool.query(
+                `UPDATE users
+                 SET fullname = COALESCE(NULLIF($1::text, ''), fullname),
+                     contactno = CASE
+                         WHEN $2::text IS NULL THEN contactno
+                         WHEN EXISTS (
+                             SELECT 1 FROM users o
+                             WHERE regexp_replace(o.contactno, '\\D', '', 'g') IN ($2::text, '91' || $2::text)
+                               AND o.active IS NOT FALSE AND o.username <> $3
+                         ) THEN contactno
+                         ELSE $2::text
+                     END
+                 WHERE username = $3`,
+                [cleanCustomerName, cleanCustomerPhone, userId]
+            );
+        } catch (uErr) {
+            console.warn('[OrderService] Could not update user fullname:', uErr.message);
+        }
+    }
+
+    return order;
 };
 
 exports.getAllOrders = async (options = {}) => {
@@ -788,8 +810,8 @@ exports.getCancelledOrdersStats = async () => {
     return result.rows[0];
 };
 
-exports.getOrdersByUser = async (userId) => {
-    // Auto-heal parent orders whose replacement child order is already delivered
+// Repairs orders whose replacement child has been delivered. `match` selects the parent order "p".
+const healReplacedOrders = async (match, param) => {
     try {
         await pool.query(`
             UPDATE orders p
@@ -798,9 +820,9 @@ exports.getOrdersByUser = async (userId) => {
             WHERE (r.parent_order_id = p.id OR r.original_order_id = p.id)
               AND (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
               AND r.status = 'Delivered'
-              AND p.user_id = $1
+              AND ${match}
               AND p.status != 'Replaced'
-        `, [userId]);
+        `, [param]);
         await pool.query(`
             UPDATE order_items
             SET status = 'Replaced'
@@ -809,9 +831,9 @@ exports.getOrdersByUser = async (userId) => {
                 JOIN orders r ON (r.parent_order_id = p.id OR r.original_order_id = p.id)
                 WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
                   AND r.status = 'Delivered'
-                  AND p.user_id = $1
+                  AND ${match}
             ) AND (status ILIKE '%replace%' OR status = 'Received at Homved')
-        `, [userId]);
+        `, [param]);
         // Auto-heal items in parent orders that were mistakenly marked 'Replaced' even though they were never replaced
         await pool.query(`
             UPDATE order_items p_item
@@ -822,7 +844,7 @@ exports.getOrdersByUser = async (userId) => {
                   SELECT p.id FROM orders p
                   JOIN orders r ON (r.parent_order_id = p.id OR r.original_order_id = p.id OR r.order_number LIKE '%-REP')
                   WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
-                    AND p.user_id = $1
+                    AND ${match}
               )
               AND p_item.id NOT IN (
                   SELECT COALESCE(r_item.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
@@ -837,17 +859,31 @@ exports.getOrdersByUser = async (userId) => {
                   WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
                     AND (r.parent_order_id = p_item.order_id OR r.original_order_id = p_item.order_id)
               )
-        `, [userId]);
+        `, [param]);
     } catch (healErr) {
         // Non-blocking
     }
+};
 
+// The repairs are three sequential writes, so run them only for orders they could change
+const mayNeedHeal = (orders) => orders.some((o) =>
+    o.has_replacement || (o.items || []).some((item) => item.status === 'Replaced' && !item.return_reason)
+);
+
+const withoutHealFlag = ({ has_replacement, ...order }) => order;
+
+exports.getOrdersByUser = async (userId) => {
     // Use json_agg to avoid N+1 query problem and improve performance.
     // Base64 return photos are excluded: customer order lists poll frequently and never display them.
     const orderColumns = await getOrderListColumns();
-    const orderResult = await pool.query(
+    const load = () => pool.query(
         `SELECT ${orderColumns}, u.fullname as customer_name, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
                 COALESCE(array_length(o.return_images, 1), 0) AS return_images_count,
+                EXISTS (
+                    SELECT 1 FROM orders r
+                    WHERE (r.parent_order_id = o.id OR r.original_order_id = o.id)
+                      AND (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
+                ) AS has_replacement,
                 ${REPLACEMENT_VALUE_SQL},
                 COALESCE(
                     (SELECT json_agg(items_data)
@@ -866,65 +902,25 @@ exports.getOrdersByUser = async (userId) => {
         [userId]
     );
 
-    return orderResult.rows;
+    let result = await load();
+    if (mayNeedHeal(result.rows)) {
+        await healReplacedOrders('p.user_id = $1', userId);
+        result = await load();
+    }
+    return result.rows.map(withoutHealFlag);
 };
 
-exports.getOrderById = async (orderId) => {
-    // Auto-heal parent order if its replacement child is already delivered
-    try {
-        await pool.query(`
-            UPDATE orders p
-            SET status = 'Replaced', logistics_status = 'Delivered', updated_at = NOW()
-            FROM orders r
-            WHERE (r.parent_order_id = p.id OR r.original_order_id = p.id)
-              AND (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
-              AND r.status = 'Delivered'
-              AND (p.id::text = $1 OR p.order_number = $1)
-              AND p.status != 'Replaced'
-        `, [String(orderId)]);
-        await pool.query(`
-            UPDATE order_items
-            SET status = 'Replaced'
-            WHERE order_id IN (
-                SELECT p.id FROM orders p
-                JOIN orders r ON (r.parent_order_id = p.id OR r.original_order_id = p.id)
-                WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
-                  AND r.status = 'Delivered'
-                  AND (p.id::text = $1 OR p.order_number = $1)
-            ) AND (status ILIKE '%replace%' OR status = 'Received at Homved')
-        `, [String(orderId)]);
-        // Auto-heal items in parent orders that were mistakenly marked 'Replaced' even though they were never replaced
-        await pool.query(`
-            UPDATE order_items p_item
-            SET status = 'Delivered'
-            WHERE p_item.status = 'Replaced'
-              AND p_item.return_reason IS NULL
-              AND p_item.order_id IN (
-                  SELECT p.id FROM orders p
-                  JOIN orders r ON (r.parent_order_id = p.id OR r.original_order_id = p.id OR r.order_number LIKE '%-REP')
-                  WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
-                    AND (p.id::text = $1 OR p.order_number = $1)
-              )
-              AND p_item.id NOT IN (
-                  SELECT COALESCE(r_item.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
-                  FROM order_items r_item
-                  JOIN orders r ON r_item.order_id = r.id
-                  WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
-              )
-              AND p_item.product_id NOT IN (
-                  SELECT r_item.product_id
-                  FROM order_items r_item
-                  JOIN orders r ON r_item.order_id = r.id
-                  WHERE (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
-                    AND (r.parent_order_id = p_item.order_id OR r.original_order_id = p_item.order_id)
-              )
-        `, [String(orderId)]);
-    } catch (healErr) {
-        // Non-blocking
-    }
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-    const orderResult = await pool.query(
+exports.getOrderById = async (orderId) => {
+    const isUuid = UUID_REGEX.test(String(orderId));
+    const load = () => pool.query(
         `SELECT o.*, u.fullname as customer_name, u.emailid as customer_email, u.contactno as customer_phone, a.address_label, a.full_address, a.city, a.state, a.postal_code, a.is_default,
+                EXISTS (
+                    SELECT 1 FROM orders r
+                    WHERE (r.parent_order_id = o.id OR r.original_order_id = o.id)
+                      AND (r.is_replacement = TRUE OR r.order_number LIKE '%-REP')
+                ) AS has_replacement,
                 ${REPLACEMENT_VALUE_SQL},
                 COALESCE(
                     (SELECT json_agg(items_data)
@@ -937,13 +933,16 @@ exports.getOrderById = async (orderId) => {
          FROM orders o
          LEFT JOIN user_addresses a ON o.address_id = a.id
          LEFT JOIN users u ON o.user_id = u.username
-         WHERE o.id::text = $1 OR o.order_number = $1`,
-        [orderId]
+         WHERE ${isUuid ? 'o.id = $1::uuid' : 'o.order_number = $1'}`,
+        [String(orderId)]
     );
 
-    if (orderResult.rows.length === 0) return null;
-
-    return orderResult.rows[0];
+    let result = await load();
+    if (mayNeedHeal(result.rows)) {
+        await healReplacedOrders('(p.id::text = $1 OR p.order_number = $1)', String(orderId));
+        result = await load();
+    }
+    return result.rows.length > 0 ? withoutHealFlag(result.rows[0]) : null;
 };
 
 /**
@@ -1070,13 +1069,14 @@ exports.requestReturnReplace = async (orderId, userId, data) => {
         );
 
         await client.query('COMMIT');
-        return await exports.getOrderById(orderId);
     } catch (error) {
         await client.query('ROLLBACK');
         throw error;
     } finally {
         client.release();
     }
+    // Read only after the connection is back in the pool
+    return exports.getOrderById(orderId);
 };
 
 /**
@@ -1173,13 +1173,14 @@ exports.requestItemCancellation = async (orderId, userId, data, isAdmin = false)
         );
 
         await client.query('COMMIT');
-        return await exports.getOrderById(orderId);
     } catch (error) {
         await client.query('ROLLBACK');
         throw error;
     } finally {
         client.release();
     }
+    // Read only after the connection is back in the pool
+    return exports.getOrderById(orderId);
 };
 
 exports.getOrderStats = async () => {
@@ -2878,7 +2879,6 @@ const createReplacementOrderTx = async (client, parentOrder) => {
  *  - Replace + fail → 'Replace QA Failed' (replacement rejected, reason shown to customer)
  */
 exports.recordQaInspection = async (orderId, { passed, notes, checkedBy } = {}) => {
-    await ensureQaColumns();
     const client = await pool.connect();
     try {
         await client.query('BEGIN');

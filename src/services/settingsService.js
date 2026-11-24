@@ -24,38 +24,29 @@ const DEFAULT_SETTINGS = {
 };
 
 let inMemorySettings = { ...DEFAULT_SETTINGS };
-let hasInitializedTable = false;
 let lastSettingsFetchTime = 0;
 const SETTINGS_CACHE_TTL_MS = 60 * 1000; // 60-second in-memory cache to eliminate repeated DB hits during checkout
 
-const ensureTableExists = async () => {
-    if (hasInitializedTable) return;
-    try {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS store_settings (
-                id SERIAL PRIMARY KEY,
-                key VARCHAR(100) UNIQUE NOT NULL,
-                value JSONB NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            ALTER TABLE orders ADD COLUMN IF NOT EXISTS gst_amount NUMERIC(10, 2) DEFAULT 0;
-            ALTER TABLE orders ADD COLUMN IF NOT EXISTS card_surcharge NUMERIC(10, 2) DEFAULT 0;
-            ALTER TABLE orders ADD COLUMN IF NOT EXISTS cod_charge NUMERIC(10, 2) DEFAULT 0;
-            ALTER TABLE products ADD COLUMN IF NOT EXISTS gst_rate NUMERIC(5, 2) DEFAULT 0;
-        `);
-        hasInitializedTable = true;
-    } catch (err) {
-        console.warn('[settingsService] Failed to ensure store_settings table:', err.message);
-    }
-};
+// The table and columns come from migrations/20261103_create_store_settings_and_product_gst.sql.
+// They must not be created here: ALTER TABLE on orders/products needs an exclusive lock, and
+// running it while checkouts are open blocks every reader of those tables.
 
+let refreshing = null;
 exports.getSettings = async (forceRefresh = false) => {
     const now = Date.now();
     if (!forceRefresh && lastSettingsFetchTime && (now - lastSettingsFetchTime < SETTINGS_CACHE_TTL_MS)) {
         return inMemorySettings;
     }
 
-    await ensureTableExists();
+    // Concurrent requests share one refresh instead of each querying the database
+    if (!refreshing) {
+        refreshing = loadSettings().finally(() => { refreshing = null; });
+    }
+    return refreshing;
+};
+
+const loadSettings = async () => {
+    const now = Date.now();
     try {
         const result = await pool.query(`SELECT key, value FROM store_settings WHERE key = 'store_config'`);
         if (result.rows.length > 0 && result.rows[0].value) {
@@ -87,7 +78,6 @@ exports.getSettings = async (forceRefresh = false) => {
 };
 
 exports.updateSettings = async (newConfig) => {
-    await ensureTableExists();
     try {
         const current = await exports.getSettings();
         const merged = {

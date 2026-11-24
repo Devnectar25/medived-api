@@ -16,26 +16,7 @@ const BANK_NAMES = {
 };
 const deriveBankName = (ifsc) => BANK_NAMES[(ifsc || '').slice(0, 4).toUpperCase()] || 'Bank';
 
-let tableEnsured = false;
-const ensureTable = async () => {
-    if (tableEnsured) return;
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS public.user_bank_accounts (
-            id SERIAL PRIMARY KEY,
-            user_id VARCHAR(255) NOT NULL,
-            holder_name VARCHAR(255) NOT NULL,
-            account_number VARCHAR(32) NOT NULL,
-            ifsc_code VARCHAR(11) NOT NULL,
-            bank_name VARCHAR(100),
-            is_default BOOLEAN NOT NULL DEFAULT FALSE,
-            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-            UNIQUE (user_id, account_number, ifsc_code)
-        );
-        CREATE INDEX IF NOT EXISTS idx_user_bank_accounts_user_id ON public.user_bank_accounts (user_id);
-    `);
-    tableEnsured = true;
-};
+// Table: migrations/20261101_create_user_bank_accounts.sql
 
 const mapRow = (r) => ({
     id: String(r.id),
@@ -80,21 +61,17 @@ const backfillFromOrders = async (userId) => {
     if (!row) return;
     const details = normalize({ holderName: row.refund_holder_name, accountNumber: row.refund_bank_account, ifscCode: row.refund_ifsc_code });
     if (validate(details)) return;
-    await exports.saveAccount(userId, details, { makeDefault: true });
+    return exports.saveAccount(userId, details, { makeDefault: true });
 };
 
 exports.listAccounts = async (userId) => {
-    await ensureTable();
-    let res = await pool.query(
+    const res = await pool.query(
         `SELECT * FROM user_bank_accounts WHERE user_id = $1 ORDER BY is_default DESC, updated_at DESC`,
         [String(userId)]
     );
     if (res.rows.length === 0) {
-        await backfillFromOrders(userId);
-        res = await pool.query(
-            `SELECT * FROM user_bank_accounts WHERE user_id = $1 ORDER BY is_default DESC, updated_at DESC`,
-            [String(userId)]
-        );
+        const imported = await backfillFromOrders(userId);
+        return imported ? [imported] : [];
     }
     return res.rows.map(mapRow);
 };
@@ -104,7 +81,6 @@ exports.listAccounts = async (userId) => {
  * The first account a user saves automatically becomes the default.
  */
 exports.saveAccount = async (userId, rawDetails, { makeDefault = false } = {}) => {
-    await ensureTable();
     const details = normalize(rawDetails);
     const error = validate(details, rawDetails?.holderName);
     if (error) {
@@ -158,7 +134,6 @@ exports.rememberAccount = async (userId, rawDetails) => {
 };
 
 exports.setDefault = async (userId, accountId) => {
-    await ensureTable();
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -180,7 +155,6 @@ exports.setDefault = async (userId, accountId) => {
 };
 
 exports.deleteAccount = async (userId, accountId) => {
-    await ensureTable();
     const res = await pool.query(
         'DELETE FROM user_bank_accounts WHERE id = $1 AND user_id = $2 RETURNING is_default',
         [accountId, String(userId)]

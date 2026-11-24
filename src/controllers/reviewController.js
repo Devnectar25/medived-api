@@ -3,8 +3,10 @@ const reviewService = require('../services/reviewService');
 exports.getProductReviews = async (req, res) => {
     try {
         const { productId } = req.params;
-        const reviews = await reviewService.getReviewsByProduct(productId);
-        const summary = await reviewService.getReviewSummary(productId);
+        const [reviews, summary] = await Promise.all([
+            reviewService.getReviewsByProduct(productId),
+            reviewService.getReviewSummary(productId)
+        ]);
 
         res.status(200).json({
             success: true,

@@ -16,8 +16,9 @@ const pool = new Pool({
     ssl: {
         rejectUnauthorized: false
     },
-    max: 20,
-    idleTimeoutMillis: 60000,
+    // Each process holds up to this many connections; keep (processes x max) below the database pooler's client limit
+    max: parseInt(process.env.PG_POOL_MAX, 10) || 20,
+    idleTimeoutMillis: 300000, // opening a connection costs several round trips to the database region
     connectionTimeoutMillis: 10000,
     keepAlive: true,
 });
