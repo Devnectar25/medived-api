@@ -663,10 +663,10 @@ exports.getCancelledOrders = async (options = {}) => {
                      WHERE (
                         o.status IN ('CANCEL_REQUESTED', 'Cancelled', 'Refunded', 'Cancellation Requested', 'Returned', 'Received at Homved', 'Return Request Processing', 'Return Approved', 'Return Rejected', 'Return Processing', 'Return Collected', 'Restocked', 'Partially Returning', 'Return Requested')
                         OR o.is_returned_order = TRUE
-                        OR o.return_type IS NOT NULL
+                        OR o.return_type = 'Return'
                         OR EXISTS (
                             SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND (
-                                oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED', 'Return Requested', 'Return Request Processing', 'Replace Requested', 'Replacement Request Processing', 'Returned', 'Return Approved', 'Refunded', 'Cancelled', 'Received at Homved', 'Restocked', 'Return Processing')
+                                oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED', 'Return Requested', 'Return Request Processing', 'Returned', 'Return Approved', 'Refunded', 'Cancelled', 'Received at Homved', 'Restocked', 'Return Processing')
                                 OR oi.status LIKE 'Return%'
                             )
                         )
@@ -674,10 +674,39 @@ exports.getCancelledOrders = async (options = {}) => {
                      AND (
                         (LOWER(o.payment_method) != 'cod' AND o.payment_status IN ('Paid', 'Refunded'))
                         OR o.is_returned_order = TRUE
-                        OR o.return_type IS NOT NULL
+                        OR o.return_type = 'Return'
                         OR o.status LIKE 'Return%' 
                         OR o.status IN ('Returned', 'Refunded', 'Received at Homved', 'Restocked', 'Partially Returning')
-                        OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND (oi.status LIKE 'Return%' OR oi.status LIKE 'Replace%' OR oi.status IN ('Returned', 'Refunded', 'Received at Homved', 'Restocked')))
+                        OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id AND (oi.status LIKE 'Return%' OR oi.status IN ('Returned', 'Refunded', 'Received at Homved', 'Restocked')))
+                     )
+                     -- A rejected return/replacement request was never owed a refund, so it is not shown
+                     -- here at all, unless money was actually refunded
+                     -- (or the customer asked for the refusal to be reviewed: refund_status 'In-Review')
+                     AND NOT (o.status IN ('Return Rejected', 'Replace Rejected')
+                              AND COALESCE(o.refund_status, '') NOT IN ('Refunded', 'Completed', 'In-Review'))
+                     -- Only orders that are ready to refund (or whose refund is under way or finished).
+                     -- Orders still waiting on an earlier step stay off the desk: unapproved cancellation
+                     -- requests, returns awaiting approval / pickup / quality check, and review requests.
+                     AND (
+                        o.refund_status IN ('Processing', 'Refunded', 'Completed')
+                        OR o.status IN ('Cancelled', 'Partially Cancelled', 'Refunded', 'Returned', 'Return QA Passed', 'Restocked')
+                        OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id
+                                   AND oi.status IN ('Cancelled', 'Return QA Passed', 'Returned', 'Refunded', 'Restocked'))
+                     )
+                     -- Exclude replacement orders from the Refund Desk (handled in Order Management)
+                     AND (o.is_replacement IS NOT TRUE)
+                     AND (o.order_number NOT LIKE '%-REP')
+                     AND (o.return_type != 'Replace' OR o.return_type IS NULL)
+                     AND (o.status NOT LIKE 'Replace%' AND o.status != 'Replaced')
+                     AND NOT EXISTS (
+                         SELECT 1 FROM order_items oi 
+                         WHERE oi.order_id = o.id 
+                           AND (oi.status LIKE 'Replace%' OR oi.status = 'Replaced')
+                           AND NOT EXISTS (
+                               SELECT 1 FROM order_items oi2 
+                               WHERE oi2.order_id = o.id 
+                                 AND (oi2.status LIKE 'Return%' OR oi2.status IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED', 'Refunded'))
+                           )
                      )`;
 
     if (searchTerm) {
@@ -694,7 +723,7 @@ exports.getCancelledOrders = async (options = {}) => {
         // Exclude: already Refunded/Completed, and unapproved online cancellation requests.
         // All returned orders (including COD returns) must always be visible for refund processing.
         baseQuery += `
-                     AND (o.refund_status IS NULL OR o.refund_status NOT IN ('Refunded', 'Completed'))
+                     AND (o.refund_status IS NULL OR o.refund_status NOT IN ('Refunded', 'Completed', 'Rejected', 'Denied'))
                      AND NOT (
                          (o.refund_status = 'Pending' OR o.refund_status IS NULL)
                          AND o.status IN ('Cancellation Requested', 'CANCEL_REQUESTED')
@@ -796,14 +825,36 @@ exports.getCancelledOrdersStats = async () => {
             COUNT(*) FILTER (
                 WHERE (status IN ('CANCEL_REQUESTED', 'Cancelled', 'Refunded', 'Cancellation Requested', 'Returned', 'Received at Homved', 'Return Request Processing', 'Return Approved', 'Return Rejected', 'Return Processing', 'Return Collected', 'Restocked', 'Partially Returning', 'Return Requested')
                 OR is_returned_order = TRUE
-                OR return_type IS NOT NULL
+                OR return_type = 'Return'
                 OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND (oi.status IN ('Cancellation Requested', 'CANCEL_REQUESTED', 'Returned', 'Return Approved', 'Refunded', 'Cancelled', 'Return Request Processing', 'Return Requested', 'Return Processing') OR oi.status LIKE 'Return%'))
-                ) AND (LOWER(payment_method) != 'cod' OR is_returned_order = TRUE OR return_type IS NOT NULL OR status LIKE 'Return%' OR status IN ('Returned', 'Refunded', 'Received at Homved', 'Partially Returning'))
+                ) AND (LOWER(payment_method) != 'cod' OR is_returned_order = TRUE OR return_type = 'Return' OR status LIKE 'Return%' OR status IN ('Returned', 'Refunded', 'Received at Homved', 'Partially Returning'))
+                AND NOT (status IN ('Return Rejected', 'Replace Rejected') AND COALESCE(refund_status, '') NOT IN ('Refunded', 'Completed', 'In-Review'))
+                AND (
+                    refund_status IN ('Processing', 'Refunded', 'Completed')
+                    OR status IN ('Cancelled', 'Partially Cancelled', 'Refunded', 'Returned', 'Return QA Passed', 'Restocked')
+                    OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id
+                               AND oi.status IN ('Cancelled', 'Return QA Passed', 'Returned', 'Refunded', 'Restocked'))
+                )
+                AND (is_replacement IS NOT TRUE)
+                AND (order_number NOT LIKE '%-REP')
+                AND (return_type != 'Replace' OR return_type IS NULL)
+                AND (status NOT LIKE 'Replace%' AND status != 'Replaced')
             ) as total_cancelled,
             COUNT(*) FILTER (
                 WHERE (refund_status = 'Pending' OR refund_status IS NULL) 
                 AND payment_status NOT IN ('Failed', 'Cancelled')
-                AND ((LOWER(payment_method) != 'cod' AND payment_status IN ('Paid', 'Refunded')) OR is_returned_order = TRUE OR return_type IS NOT NULL OR status LIKE 'Return%' OR status IN ('Returned', 'Refunded', 'Received at Homved', 'Partially Returning'))
+                AND status NOT IN ('Return Rejected', 'Replace Rejected')
+                AND (
+                    refund_status IN ('Processing', 'Refunded', 'Completed')
+                    OR status IN ('Cancelled', 'Partially Cancelled', 'Refunded', 'Returned', 'Return QA Passed', 'Restocked')
+                    OR EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id
+                               AND oi.status IN ('Cancelled', 'Return QA Passed', 'Returned', 'Refunded', 'Restocked'))
+                )
+                AND (is_replacement IS NOT TRUE)
+                AND (order_number NOT LIKE '%-REP')
+                AND (return_type != 'Replace' OR return_type IS NULL)
+                AND (status NOT LIKE 'Replace%' AND status != 'Replaced')
+                AND ((LOWER(payment_method) != 'cod' AND payment_status IN ('Paid', 'Refunded')) OR is_returned_order = TRUE OR return_type = 'Return' OR status LIKE 'Return%' OR status IN ('Returned', 'Refunded', 'Received at Homved', 'Partially Returning'))
             ) as pending_refunds
          FROM orders`
     );
@@ -943,6 +994,94 @@ exports.getOrderById = async (orderId) => {
         result = await load();
     }
     return result.rows.length > 0 ? withoutHealFlag(result.rows[0]) : null;
+};
+
+// Returns the store refused (request rejected, or the item failed the quality check)
+const REFUSED_RETURN_STATUSES = ['Return Rejected', 'Return QA Failed'];
+
+/**
+ * The customer asks for a refused return to be reviewed. The refund goes back to the Refund Desk
+ * as "In-Review" with the customer's reason, where the admin can refund it or reject it again.
+ */
+exports.requestRefundReview = async (orderId, userId, reason) => {
+    const cleanReason = String(reason || '').trim();
+    const fail = (message, statusCode = 400) => { throw Object.assign(new Error(message), { statusCode }); };
+    if (cleanReason.length < 10) fail('Please tell us in a few words why the return should be reviewed.');
+    if (cleanReason.length > 1000) fail('Please keep the reason under 1000 characters.');
+
+    const result = await pool.query(
+        `UPDATE orders
+         SET refund_status = 'In-Review',
+             refund_admin_note = $3::text,
+             updated_at = NOW()
+         WHERE id::text = $1 AND user_id = $2
+           AND status = ANY($4::text[])
+           AND COALESCE(refund_status, '') NOT IN ('Refunded', 'Completed', 'In-Review', 'Processing')
+           AND COALESCE(refund_admin_note, '') NOT LIKE '[REVIEW DECLINED]%'
+         RETURNING id`,
+        [String(orderId), userId, `[REVIEW REQUESTED BY CUSTOMER] ${cleanReason}`, REFUSED_RETURN_STATUSES]
+    );
+    if (result.rows.length === 0) {
+        const existing = await pool.query('SELECT user_id, status, refund_status, refund_admin_note FROM orders WHERE id::text = $1', [String(orderId)]);
+        const order = existing.rows[0];
+        if (!order || order.user_id !== userId) fail('Order not found', 404);
+        if (['In-Review', 'Processing'].includes(order.refund_status)) fail('A review has already been requested for this order.');
+        if ((order.refund_admin_note || '').startsWith('[REVIEW DECLINED]')) fail('This return has already been reviewed.');
+        if (['Refunded', 'Completed'].includes(order.refund_status)) fail('This order has already been refunded.');
+        fail('A review can only be requested for a return that was not approved.');
+    }
+    return exports.getOrderById(orderId);
+};
+
+/**
+ * Admin decision on a customer's review request (from the Orders page).
+ * Approve: the return is accepted after all; it continues like a return that passed QA, so it
+ *          appears on the Refund Desk ready to refund.
+ * Decline: the refusal stands; the customer is told and cannot ask again.
+ */
+exports.decideRefundReview = async (orderId, decision, note) => {
+    const fail = (message, statusCode = 400) => { throw Object.assign(new Error(message), { statusCode }); };
+    if (!['approve', 'decline'].includes(decision)) fail('Decision must be "approve" or "decline".');
+    const cleanNote = String(note || '').trim().slice(0, 1000);
+    if (decision === 'decline' && !cleanNote) fail('Please give the customer a reason for declining.');
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const found = await client.query(
+            `SELECT id, status, refund_status FROM orders WHERE id::text = $1 FOR UPDATE`, [String(orderId)]
+        );
+        const order = found.rows[0];
+        if (!order) fail('Order not found', 404);
+        if (order.refund_status !== 'In-Review' || !REFUSED_RETURN_STATUSES.includes(order.status)) {
+            fail('This order has no pending review request.');
+        }
+
+        if (decision === 'approve') {
+            await client.query(
+                `UPDATE order_items SET status = 'Return QA Passed' WHERE order_id = $1 AND status = ANY($2::text[])`,
+                [order.id, REFUSED_RETURN_STATUSES]
+            );
+            await client.query(
+                `UPDATE orders SET status = 'Return QA Passed', qa_status = 'Passed', refund_status = 'Pending',
+                        rejection_reason = NULL, refund_admin_note = $2, updated_at = NOW()
+                 WHERE id = $1`,
+                [order.id, `[REVIEW APPROVED]${cleanNote ? ' ' + cleanNote : ''}`]
+            );
+        } else {
+            await client.query(
+                `UPDATE orders SET refund_status = 'Rejected', refund_admin_note = $2, updated_at = NOW() WHERE id = $1`,
+                [order.id, `[REVIEW DECLINED] ${cleanNote}`]
+            );
+        }
+        await client.query('COMMIT');
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+    } finally {
+        client.release();
+    }
+    return exports.getOrderById(orderId);
 };
 
 /**
@@ -1367,6 +1506,10 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                 if (itemRes.rows.length === 0) continue;
                 const originalItem = itemRes.rows[0];
                 const dbItemId = originalItem.id; // This is a valid UUID!
+                // Approving a customer's cancellation request keeps the reason they gave
+                const itemCancelReason = ['Cancellation Requested', 'CANCEL_REQUESTED'].includes(originalItem.status) && originalItem.cancel_reason
+                    ? originalItem.cancel_reason
+                    : cancelReason;
 
                 if (cancelQty > originalItem.quantity) throw new Error(`Cannot cancel more than purchased for ${originalItem.name}`);
 
@@ -1379,11 +1522,11 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                         `INSERT INTO order_items (
                             order_id, product_id, name, quantity, price, image, status, cancel_reason, created_at
                         ) VALUES ($1::uuid, $2::integer, $3::text, $4::integer, $5::numeric, $6::text, $7::text, $8::text, NOW())`,
-                        [orderId, originalItem.product_id, originalItem.name, cancelQty, originalItem.price, originalItem.image, status, cancelReason]
+                        [orderId, originalItem.product_id, originalItem.name, cancelQty, originalItem.price, originalItem.image, status, itemCancelReason]
                     );
                 } else {
                     // FULL ROW: Just update status using UUID
-                    await client.query(`UPDATE order_items SET status = $1::text, cancel_reason = $2::text WHERE id = $3::uuid`, [status, cancelReason, dbItemId]);
+                    await client.query(`UPDATE order_items SET status = $1::text, cancel_reason = $2::text WHERE id = $3::uuid`, [status, itemCancelReason, dbItemId]);
                 }
 
                 // Determine stock adjustment
@@ -1439,6 +1582,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                     `UPDATE orders 
                      SET status = $2::text, 
                          cancel_reason = CASE 
+                             -- Approving a customer's request keeps the reason they gave
+                             WHEN status IN ('Cancellation Requested', 'CANCEL_REQUESTED') AND COALESCE(cancel_reason, '') NOT IN ('', 'Not specified') THEN cancel_reason
                              WHEN $3::text IS NOT NULL AND $3::text <> '' THEN $3::text 
                              ELSE COALESCE(cancel_reason, 'Not specified') 
                          END,
@@ -1592,6 +1737,15 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                     ]
                 );
 
+                // Once every requested item is rejected the order has nothing left to refund, so it
+                // leaves the Refund Desk's active list (it stays under the "Rejected" filter)
+                await client.query(
+                    `UPDATE orders SET refund_status = 'Rejected'
+                     WHERE id = $1::uuid AND status ~ '(Return|Replace) Rejected$'
+                       AND COALESCE(refund_status, '') NOT IN ('Refunded', 'Completed')`,
+                    [orderId]
+                );
+
                 await client.query('COMMIT');
                 return await exports.getOrderById(orderId);
             }
@@ -1605,6 +1759,8 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             updateQuery = `UPDATE orders 
                            SET status = $2::text, 
                                cancel_reason = CASE 
+                                   -- Approving a customer's request keeps the reason they gave
+                                   WHEN status IN ('Cancellation Requested', 'CANCEL_REQUESTED') AND COALESCE(cancel_reason, '') NOT IN ('', 'Not specified') THEN cancel_reason
                                    WHEN $3::text IS NOT NULL AND $3::text <> '' THEN $3::text 
                                    ELSE COALESCE(cancel_reason, 'Not specified') 
                                END,
@@ -1704,6 +1860,12 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
             if (itemIds && itemIds.length > 0) {
                 const allItemsRes = await client.query('SELECT status FROM order_items WHERE order_id = $1', [orderId]);
                 finalStatus = resolveParentOrderStatus(allItemsRes.rows, oldOrder.status);
+            }
+
+            // A rejected return/replacement request has nothing left to refund, so it leaves the
+            // Refund Desk's active list (it stays under the "Rejected" filter). Money already refunded stays recorded.
+            if (/(Return|Replace) Rejected$/.test(finalStatus) && !['Refunded', 'Completed'].includes(refundStatusVal)) {
+                refundStatusVal = 'Rejected';
             }
 
             updateQuery = `UPDATE orders SET 
@@ -2248,13 +2410,25 @@ exports.updateRefundStatus = async (orderId, refundData) => {
         const transitioningToFinal = refundStatus === 'Completed' || refundStatus === 'Refunded';
 
         // ── QA gate: returned parcels must pass QA inspection before any refund is processed ──
-        if ((transitioningToFinal || refundStatus === 'Processing') && REFUND_BLOCKED_UNTIL_QA.includes(oldOrder.status) && oldOrder.return_type !== 'Replace') {
+        // Exception: the customer asked for a failed QA to be reviewed, so the admin may now refund it
+        // (a failed-QA refund can only be In-Review or Processing through that review)
+        const reviewOfFailedQa = oldOrder.status === 'Return QA Failed' && ['In-Review', 'Processing'].includes(oldOrder.refund_status);
+        if ((transitioningToFinal || refundStatus === 'Processing') && REFUND_BLOCKED_UNTIL_QA.includes(oldOrder.status) && oldOrder.return_type !== 'Replace' && !reviewOfFailedQa) {
             const reason = oldOrder.status === 'Return QA Failed'
                 ? 'This return failed QA inspection, so it is not eligible for a refund.'
                 : `Refund cannot be processed yet: the returned parcel must be received at Homved and pass QA inspection first (current status: "${oldOrder.status}").`;
             const err = new Error(reason);
             err.statusCode = 400;
             throw err;
+        }
+
+        // Refunding a refused return after the customer's review request overturns that decision:
+        // its items count as returned again, so the order completes as Refunded like any other return
+        if (transitioningToFinal && ['In-Review', 'Processing'].includes(oldOrder.refund_status) && REFUSED_RETURN_STATUSES.includes(oldOrder.status)) {
+            await client.query(
+                `UPDATE order_items SET status = 'Return QA Passed' WHERE order_id = $1 AND status = ANY($2::text[])`,
+                [orderId, REFUSED_RETURN_STATUSES]
+            );
         }
 
         let finalTxnId = txnId;
