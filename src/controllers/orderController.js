@@ -160,8 +160,15 @@ exports.updateOrderStatus = async (req, res) => {
         let cancelledBy = null;
         if (status === 'Cancelled') {
             if (isAdmin) {
-                // If the user previously requested cancellation, it was customer-initiated
-                if (order.status === 'Cancellation Requested' || order.status === 'CANCEL_REQUESTED') {
+                // If the user previously requested cancellation (of the order or of the items being
+                // cancelled now), it was customer-initiated
+                const isRequested = (s) => s === 'Cancellation Requested' || s === 'CANCEL_REQUESTED';
+                const approvedIds = Array.isArray(itemIds) ? itemIds.map((x) => String(x && typeof x === 'object' ? x.id : x)) : [];
+                const approvesItemRequest = (order.items || []).some((item) =>
+                    isRequested(item.status) &&
+                    (approvedIds.length === 0 || approvedIds.includes(String(item.id)) || approvedIds.includes(String(item.product_id)))
+                );
+                if (isRequested(order.status) || approvesItemRequest) {
                     cancelledBy = 'customer';
                 } else {
                     cancelledBy = 'admin';
@@ -309,6 +316,26 @@ exports.requestReturnReplace = async (req, res) => {
     } catch (error) {
         console.error('[OrderController] requestReturnReplace Error:', error);
         res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// Customer asks the store to look again at a rejected / quality-failed return
+exports.requestRefundReview = async (req, res) => {
+    try {
+        const result = await orderService.requestRefundReview(req.params.id, req.user.id, req.body?.reason);
+        res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        res.status(error.statusCode || 500).json({ success: false, message: error.message });
+    }
+};
+
+// Admin approves or declines a customer's review request
+exports.decideRefundReview = async (req, res) => {
+    try {
+        const result = await orderService.decideRefundReview(req.params.id, req.body?.decision, req.body?.note);
+        res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
 };
 
