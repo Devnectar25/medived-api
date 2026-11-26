@@ -132,7 +132,7 @@ exports.registerUser = async (data) => {
     // Hash password
     const hashedPassword = await passwords.hash(password);
 
-    await homvedOtp.sendOtp(cleanPhone, 'registration');
+    const otpPurpose = await homvedOtp.sendOtp(cleanPhone, 'registration');
 
     // Store registration data in persistent storage
     await saveOtpRecord(cleanEmail, {
@@ -142,7 +142,8 @@ exports.registerUser = async (data) => {
             email: cleanEmail,
             password: hashedPassword,
             fullName: (fullName || '').toString().trim(),
-            phone: cleanPhone
+            phone: cleanPhone,
+            otpPurpose
         }
     });
 
@@ -187,7 +188,7 @@ exports.loginUser = async (mobileNo, password) => {
     // Key of the pending verification session, sent back by the client on verify/resend
     const cleanEmail = (user.emailid || user.username).trim().toLowerCase();
 
-    await homvedOtp.sendOtp(mobile, 'login');
+    const otpPurpose = await homvedOtp.sendOtp(mobile, 'login');
 
     await saveOtpRecord(cleanEmail, {
         expires: Date.now() + SESSION_TTL_MS,
@@ -199,6 +200,7 @@ exports.loginUser = async (mobileNo, password) => {
             fullName: user.fullname || user.username,
             phone: user.contactno,
             mobile,
+            otpPurpose,
             twoFactorEnabled: true
         }
     });
@@ -218,6 +220,15 @@ const sessionMobile = (record) => {
     );
     if (!mobile) throw new Error("Verification session is invalid. Please try again.");
     return mobile;
+};
+
+// The purpose the session's OTP was sent with (see homvedOtpService)
+const sessionPurpose = (record) =>
+    (record.type === 'registration' ? record.registrationData : record.userData)?.otpPurpose;
+
+const setSessionPurpose = (record, otpPurpose) => {
+    if (record.type === 'registration') record.registrationData.otpPurpose = otpPurpose;
+    else record.userData.otpPurpose = otpPurpose;
 };
 
 exports.verifyOtp = async (email, otp) => {
@@ -242,7 +253,7 @@ exports.verifyOtp = async (email, otp) => {
         throw new Error("OTP has expired. Please request a new one");
     }
 
-    await homvedOtp.verifyOtp(sessionMobile(record), record.type, cleanOtp);
+    await homvedOtp.verifyOtp(sessionMobile(record), record.type, cleanOtp, sessionPurpose(record));
 
     let user;
     let token;
@@ -272,7 +283,7 @@ exports.verifyOtp = async (email, otp) => {
     } else {
         console.log(`[verifyOtp Service] Processing login verification for email: ${cleanEmail}`);
         // Login verification
-        const { mobile, ...userData } = record.userData;
+        const { mobile, otpPurpose, ...userData } = record.userData;
         user = userData;
         const loginId = user.id || user.userid;
         const loginResult = await pool.query("SELECT member_since, fullname, avatar_url, contactno FROM public.users WHERE username = $1", [loginId]);
@@ -309,7 +320,7 @@ exports.resendOtp = async (email) => {
     }
 
     const mobile = sessionMobile(existingRecord);
-    await homvedOtp.sendOtp(mobile, existingRecord.type);
+    setSessionPurpose(existingRecord, await homvedOtp.sendOtp(mobile, existingRecord.type));
 
     existingRecord.expires = Date.now() + SESSION_TTL_MS;
     await saveOtpRecord(cleanEmail, existingRecord);
@@ -396,12 +407,12 @@ exports.requestPasswordReset = async (mobileNo) => {
     }
     const user = users[0];
 
-    await homvedOtp.sendOtp(mobile, 'password_reset');
+    const otpPurpose = await homvedOtp.sendOtp(mobile, 'password_reset');
 
     await saveOtpRecord(resetKey(mobile), {
         expires: Date.now() + SESSION_TTL_MS,
         type: 'password_reset',
-        userData: { username: user.username, mobile }
+        userData: { username: user.username, mobile, otpPurpose }
     });
 
     return {
@@ -436,7 +447,7 @@ exports.resetPasswordWithOtp = async (mobileNo, otp, newPassword) => {
         throw new Error("Verification code has expired. Please request a new one.");
     }
 
-    await homvedOtp.verifyOtp(sessionMobile(record), 'password_reset', cleanOtp);
+    await homvedOtp.verifyOtp(sessionMobile(record), 'password_reset', cleanOtp, sessionPurpose(record));
 
     // Hash new password
     const hashedPassword = await passwords.hash(newPassword);
