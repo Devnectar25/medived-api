@@ -5,9 +5,11 @@ const BASE_URL = (process.env.HOMVED_OTP_BASE_URL || 'https://uat.homved.com/api
 const TIMEOUT_MS = 15000;
 
 // Homved accepts only the purposes "registration" and "forgot_password" (others are rejected
-// with "Invalid OTP purpose"). "forgot_password" is refused for numbers that are not users in
-// Homved's own system ("User with this phone number does not exist"), and our customers live
-// in this database, so login and password reset use "registration" too.
+// with "Invalid OTP purpose"), and checks them against its own user system, not this database:
+//   "registration" is refused for numbers Homved already has ("...phone number already exists")
+//   "forgot_password" is refused for numbers it does not have ("...phone number does not exist")
+// So every flow starts with the purpose below and, on one of those two refusals, sends with the
+// other one. The purpose actually used is kept with the session, because verify must match it.
 const PURPOSES = {
     registration: 'registration',
     login: process.env.HOMVED_OTP_LOGIN_PURPOSE || 'registration',
@@ -23,6 +25,9 @@ const normalizeMobile = (value) => {
 };
 
 const maskMobile = (mobile) => `********${mobile.slice(-2)}`;
+
+const OTHER_PURPOSE = { registration: 'forgot_password', forgot_password: 'registration' };
+const WRONG_PURPOSE_REFUSAL = /phone number (already exists|does not exist)/i;
 
 const purposeFor = (type) => {
     const purpose = PURPOSES[type];
@@ -56,19 +61,34 @@ const post = async (action, payload) => {
 exports.normalizeMobile = normalizeMobile;
 exports.maskMobile = maskMobile;
 
-// Resolves only when Homved accepted the request; throws otherwise.
-exports.sendOtp = async (mobileNo, type) => {
-    const { httpOk, body } = await post('send', { mobileNo, purpose: purposeFor(type) });
+const send = async (mobileNo, purpose) => {
+    const { httpOk, body } = await post('send', { mobileNo, purpose });
     const codeOk = body.code === undefined || (body.code >= 200 && body.code < 300);
     if (!httpOk || !codeOk) {
-        console.warn(`[homvedOtp] send rejected for ${maskMobile(mobileNo)}: ${body.message}`);
-        throw otpError(body.message || 'Could not send OTP. Please try again.', 400);
+        console.warn(`[homvedOtp] send (${purpose}) rejected for ${maskMobile(mobileNo)}: ${body.message}`);
+        const err = otpError(body.message || 'Could not send OTP. Please try again.', 400);
+        err.wrongPurpose = WRONG_PURPOSE_REFUSAL.test(body.message || '');
+        throw err;
+    }
+};
+
+// Resolves with the purpose Homved accepted; throws if neither purpose was accepted.
+exports.sendOtp = async (mobileNo, type) => {
+    const purpose = purposeFor(type);
+    try {
+        await send(mobileNo, purpose);
+        return purpose;
+    } catch (err) {
+        if (!err.wrongPurpose || !OTHER_PURPOSE[purpose]) throw err;
+        await send(mobileNo, OTHER_PURPOSE[purpose]);
+        return OTHER_PURPOSE[purpose];
     }
 };
 
 // Resolves only when Homved explicitly reports verified: true; throws otherwise.
-exports.verifyOtp = async (mobileNo, type, otp) => {
-    const { httpOk, body } = await post('verify', { mobileNo, purpose: purposeFor(type), otp });
+// `purpose` is the one sendOtp returned; sessions saved before that was recorded fall back to the default.
+exports.verifyOtp = async (mobileNo, type, otp, purpose) => {
+    const { httpOk, body } = await post('verify', { mobileNo, purpose: purpose || purposeFor(type), otp });
     if (!httpOk || body.verified !== true) {
         console.warn(`[homvedOtp] verify rejected for ${maskMobile(mobileNo)}: ${body.message}`);
         throw otpError(body.message || 'Invalid verification code', 400);
