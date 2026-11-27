@@ -30,79 +30,104 @@ exports.getReviewsByProduct = async (productId) => {
     });
 };
 
+const resolveUserRecord = async (client, userIdentifier) => {
+    const cleanId = (userIdentifier || '').toString().trim();
+    if (!cleanId) return null;
+
+    const userCheck = await client.query(
+        `SELECT username, emailid
+         FROM users
+         WHERE username = $1 OR LOWER(emailid) = LOWER($1)
+         LIMIT 1`,
+        [cleanId]
+    );
+    return userCheck.rows[0] || null;
+};
+
+exports.getReviewedProductIdsByUser = async (userIdentifier) => {
+    const userRecord = await resolveUserRecord(pool, userIdentifier);
+    if (!userRecord) return [];
+
+    const identifiers = Array.from(
+        new Set([userRecord.username, userRecord.emailid].filter(Boolean))
+    );
+    if (identifiers.length === 0) return [];
+
+    const result = await pool.query(
+        `SELECT DISTINCT productid::text AS product_id
+         FROM review
+         WHERE username = ANY($1::text[])`,
+        [identifiers]
+    );
+    return result.rows.map((row) => row.product_id);
+};
+
 exports.createReview = async (data) => {
     const { productId, username, rating, review } = data;
-
-    // Ensure user exists to satisfy FK constraint
-    let validUser = username;
-    const userCheck = await pool.query("SELECT username FROM users WHERE username = $1 OR emailid = $1", [username]);
-
-    if (userCheck.rows.length > 0) {
-        validUser = userCheck.rows[0].username;
-    } else {
-        try {
-            // Create the user on the fly to satisfy constraint
-            const email = `${(username || 'guest').toLowerCase().replace(/\s+/g, '')}@example.com`;
-            await pool.query(
-                "INSERT INTO users (username, emailid, password, active) VALUES ($1, $2, 'guest123', true)",
-                [username || 'guest', email]
-            );
-        } catch (userErr) {
-            console.warn("Could not create new user, falling back to existing:", userErr.message);
-            // Fallback to the first available user
-            const anyUser = await pool.query("SELECT username FROM users LIMIT 1");
-            if (anyUser.rows.length > 0) {
-                validUser = anyUser.rows[0].username;
-            } else {
-                throw new Error("Cannot create review: No valid user found.");
-            }
-        }
+    const parsedProductId = parseInt(productId, 10);
+    if (isNaN(parsedProductId)) {
+        throw Object.assign(new Error("Invalid product ID."), { statusCode: 400 });
     }
 
-    // Check if the user has already rated/reviewed this product - if so, update their feedback
-    const existingCheck = await pool.query(
-        "SELECT srno FROM review WHERE productid = $1 AND username = $2",
-        [productId, validUser]
-    );
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
 
-    if (existingCheck.rows.length > 0) {
-        const updateResult = await pool.query(
-            `UPDATE review 
-             SET rating = $1, review = $2, date = CURRENT_DATE 
-             WHERE srno = $3 
+        const userRecord = await resolveUserRecord(client, username);
+        if (!userRecord) {
+            throw Object.assign(
+                new Error("Only registered customers can submit product feedback."),
+                { statusCode: 403 }
+            );
+        }
+
+        const validUser = userRecord.username;
+        const identifiers = Array.from(
+            new Set([userRecord.username, userRecord.emailid].filter(Boolean))
+        );
+
+        // Serialize concurrent feedback submissions for the same (product, user) pair
+        await client.query(
+            "SELECT pg_advisory_xact_lock(hashtext($1))",
+            [`review:${parsedProductId}:${validUser}`]
+        );
+
+        const existingCheck = await client.query(
+            "SELECT srno FROM review WHERE productid = $1 AND username = ANY($2::text[]) LIMIT 1",
+            [parsedProductId, identifiers]
+        );
+
+        if (existingCheck.rows.length > 0) {
+            throw Object.assign(
+                new Error("You have already submitted feedback for this product."),
+                { statusCode: 409 }
+            );
+        }
+
+        const result = await client.query(
+            `INSERT INTO review (productid, username, rating, review, date)
+             VALUES ($1, $2, $3, $4, CURRENT_DATE)
              RETURNING *`,
-            [rating, review, existingCheck.rows[0].srno]
+            [parsedProductId, validUser, rating, review]
         );
 
         // Update product rating and review count
-        await pool.query(
+        await client.query(
             `UPDATE products 
              SET rating = (SELECT AVG(rating::numeric) FROM review WHERE productid = $1),
                  reviews = (SELECT COUNT(*)::text FROM review WHERE productid = $1)
              WHERE product_id = $1`,
-            [productId]
+            [parsedProductId]
         );
 
-        return updateResult.rows[0];
+        await client.query("COMMIT");
+        return result.rows[0];
+    } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+    } finally {
+        client.release();
     }
-
-    const result = await pool.query(
-        `INSERT INTO review (productid, username, rating, review, date)
-         VALUES ($1, $2, $3, $4, CURRENT_DATE)
-         RETURNING *`,
-        [productId, validUser, rating, review]
-    );
-
-    // Update product rating and review count
-    await pool.query(
-        `UPDATE products 
-         SET rating = (SELECT AVG(rating::numeric) FROM review WHERE productid = $1),
-             reviews = (SELECT COUNT(*)::text FROM review WHERE productid = $1)
-         WHERE product_id = $1`,
-        [productId]
-    );
-
-    return result.rows[0];
 };
 
 exports.getReviewSummary = async (productId) => {

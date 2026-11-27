@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const couponService = require('./couponService');
+const addressService = require('./addressService');
 const paymentService = require('./paymentService');
 const dtdcService = require('./dtdcService');
 const whatsappService = require('./whatsappService');
@@ -777,6 +778,9 @@ exports.getCancelledOrders = async (options = {}) => {
                     ELSE
                         COALESCE(
                             NULLIF(o.refund_eligible_amount, 0),
+                            -- Whole order cancelled: the full amount paid (incl. shipping) is refunded,
+                            -- the same fallback the Razorpay refund uses (processRefund)
+                            CASE WHEN o.status IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED') THEN o.total END,
                             (SELECT ROUND(SUM(price * quantity), 2)
                              FROM order_items
                              WHERE order_id = o.id
@@ -1589,10 +1593,12 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                          END,
                          cancelled_by = COALESCE($9::text, cancelled_by),
                          original_status = COALESCE(original_status, $4::text), 
-                         cancelled_at = NOW(), 
+                         cancelled_at = NOW(),
                          updated_at = NOW(),
-                         refund_eligible_amount = CASE 
-                             WHEN status IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED') THEN COALESCE(refund_eligible_amount, 0)
+                         -- The rest of the order (what is still payable, incl. shipping) becomes refundable when it is
+                         -- actually cancelled. A cancellation *request* adds nothing, so approving one must add it here.
+                         refund_eligible_amount = CASE
+                             WHEN status = 'Cancelled' THEN COALESCE(refund_eligible_amount, 0)
                              ELSE COALESCE(refund_eligible_amount, 0) + total
                          END,
                          refund_bank_account = COALESCE($5::text, refund_bank_account),
@@ -1766,10 +1772,13 @@ exports.updateOrderStatus = async (orderId, status, cancelReason = null, bankDet
                                END,
                                cancelled_by = COALESCE($9::text, cancelled_by),
                                original_status = COALESCE(original_status, $4::text), 
-                               cancelled_at = NOW(), 
+                               cancelled_at = NOW(),
                                updated_at = NOW(),
-                               refund_eligible_amount = CASE 
-                                   WHEN status IN ('Cancelled', 'Cancellation Requested', 'CANCEL_REQUESTED') THEN COALESCE(refund_eligible_amount, 0)
+                               -- Only an actual cancellation makes the order refundable; a request adds nothing
+                               -- (a declined request would otherwise leave a stale refund amount behind).
+                               refund_eligible_amount = CASE
+                                   WHEN $2::text IN ('Cancellation Requested', 'CANCEL_REQUESTED') THEN COALESCE(refund_eligible_amount, 0)
+                                   WHEN status = 'Cancelled' THEN COALESCE(refund_eligible_amount, 0)
                                    ELSE COALESCE(refund_eligible_amount, 0) + total
                                END,
                                refund_bank_account = COALESCE($5::text, refund_bank_account),
@@ -2877,26 +2886,27 @@ exports.updateOrderAddress = async (orderId, addressData) => {
     const cleanPincode = pincode ? pincode.toString().trim() : null;
     const cleanAddress = address ? address.trim() : null;
 
-    if (addressId) {
-        await pool.query(
-            `UPDATE user_addresses 
-             SET full_address = COALESCE($1, full_address),
-                 city = COALESCE($2, city),
-                 state = COALESCE($3, state),
-                 postal_code = COALESCE($4, postal_code),
-                 updated_at = NOW()
-             WHERE id = $5`,
-            [cleanAddress, cleanCity, cleanState, cleanPincode, addressId]
-        );
-    } else {
-        const newAddr = await pool.query(
-            `INSERT INTO user_addresses (user_id, address_label, full_address, city, state, postal_code, is_default, created_at, updated_at)
-             VALUES ($1, 'Shipping Address', $2, $3, $4, $5, false, NOW(), NOW())
-             RETURNING id`,
-            [userId || 'guest', cleanAddress || 'Customer Address', cleanCity || 'Mumbai', cleanState || 'Maharashtra', cleanPincode || '400001']
-        );
-        await pool.query('UPDATE orders SET address_id = $1 WHERE id = $2', [newAddr.rows[0].id, orderId]);
-    }
+    // The new destination is saved as this order's own address row (hidden from the customer's saved
+    // addresses), so it changes neither the customer's address book nor any other order using the old row.
+    await addressService.ensureDeletedColumn();
+    const currentRes = addressId
+        ? await pool.query('SELECT * FROM user_addresses WHERE id = $1', [addressId])
+        : { rows: [] };
+    const current = currentRes.rows[0] || {};
+    const newAddr = await pool.query(
+        `INSERT INTO user_addresses (user_id, address_label, full_address, city, state, postal_code, is_default, is_deleted, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, false, true, NOW())
+         RETURNING id`,
+        [
+            current.user_id || userId || 'guest',
+            current.address_label || 'Shipping Address',
+            cleanAddress || current.full_address || 'Customer Address',
+            cleanCity || current.city || 'Mumbai',
+            cleanState || current.state || 'Maharashtra',
+            cleanPincode || current.postal_code || '400001',
+        ]
+    );
+    await pool.query('UPDATE orders SET address_id = $1 WHERE id = $2', [newAddr.rows[0].id, orderId]);
 
     const newName = (fullName || customerName || name || '').trim();
     const newPhone = (phone || contactno || '').trim();
@@ -3000,11 +3010,12 @@ const createReplacementOrderTx = async (client, parentOrder) => {
             INSERT INTO orders (
                 user_id, order_number, address_id, payment_method, payment_status, payment_type,
                 subtotal, shipping, total, original_total, status, logistics_provider,
-                is_replacement, parent_order_id, original_order_id, created_at, updated_at
+                is_replacement, parent_order_id, original_order_id, estimated_delivery, created_at, updated_at
             ) VALUES (
                 $1, $2, $3, $4, 'Paid', 'Replacement (₹0)',
                 0, 0, 0, $5, 'Confirmed', 'DTDC',
-                true, $6, $6, NOW(), NOW()
+                -- Same delivery estimate as a new order: 7 days from when the replacement is created
+                true, $6, $6, NOW() + INTERVAL '7 days', NOW(), NOW()
             ) RETURNING *
         `, [
             parentOrder.user_id,

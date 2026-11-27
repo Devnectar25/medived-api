@@ -21,20 +21,47 @@ exports.getProductReviews = async (req, res) => {
     }
 };
 
+exports.getMyReviewedProducts = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'User not identified' });
+        }
+
+        const productIds = await reviewService.getReviewedProductIdsByUser(userId);
+        res.setHeader('Cache-Control', 'no-store');
+        res.status(200).json({
+            success: true,
+            data: productIds
+        });
+    } catch (error) {
+        console.error('Error fetching user reviewed products:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
 exports.addProductReview = async (req, res) => {
     try {
-        const { productId, username, rating, review } = req.body;
+        const { productId, rating, review } = req.body;
+        const userId = req.user?.id;
+
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'Please log in to submit feedback' });
+        }
 
         if (!productId) {
             return res.status(400).json({ success: false, message: 'Missing product ID' });
         }
 
-        const effectiveRating = Number(rating) || 5;
+        const parsedRating = Number(rating);
+        const effectiveRating = Number.isFinite(parsedRating) && parsedRating >= 1 && parsedRating <= 5
+            ? Math.round(parsedRating)
+            : 5;
         const effectiveReview = (typeof review === 'string' ? review.trim() : '') || '';
 
         const newReview = await reviewService.createReview({
             productId,
-            username: username || 'Guest', // Fallback
+            username: userId,
             rating: effectiveRating,
             review: effectiveReview
         });
@@ -46,7 +73,7 @@ exports.addProductReview = async (req, res) => {
         });
     } catch (error) {
         console.error('Error adding review:', error);
-        res.status(500).json({ success: false, message: error.message || 'Server error' });
+        res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Server error' });
     }
 };
 
